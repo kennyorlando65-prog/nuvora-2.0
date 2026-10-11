@@ -11,17 +11,23 @@ import { getSupabaseServerClient } from "@/lib/supabase/ssr-server";
  * URL fragment a script can read.
  *
  * `/auth/callback` is intentionally NOT in the middleware matcher: it must remain
- * reachable while a session is being established, and the "already signed in, go to /admin"
- * redirect in middleware would otherwise intercept it.
+ * reachable while a session is being established, and the "already signed in, go to the
+ * dashboard" redirect in middleware would otherwise intercept it.
+ *
+ * THE DEFAULT DESTINATION IS THE CUSTOMER DASHBOARD, not the admin console. It used to be
+ * /admin, which was correct when the only accounts were operators - but now that customers
+ * sign up and confirm their email through this same route, defaulting to /admin would send
+ * every newly confirmed customer to a 403 on their very first visit. An operator who was
+ * heading for /admin still arrives there, because the `next` parameter carries it.
  */
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl;
   const code = searchParams.get("code");
-  const rawNext = searchParams.get("next") ?? "/admin";
+  const rawNext = searchParams.get("next") ?? "/dashboard";
 
   // Same open-redirect guard as the sign-in action: only same-site absolute paths.
   const next =
-    rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/admin";
+    rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
 
   if (!code) {
     return NextResponse.redirect(
