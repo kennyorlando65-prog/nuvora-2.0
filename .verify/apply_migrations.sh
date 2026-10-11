@@ -15,12 +15,15 @@
 #   8. a line total that contradicts unit_price * quantity is REJECTED
 #   9. the audit trigger fires, and redacts raw_payload from the trail
 #  10. a replayed (provider, event_id) webhook is REJECTED
+#  11. a webhook event may be freshly received, processed, or failed - and may never
+#      be both processed and errored (the Stage 6 constraint fix, which was caught
+#      only because these assertions were run rather than reasoned about)
 #
 # The migration files target Supabase, so a shim supplies only what a bare
 # PostgreSQL lacks: the anon/authenticated/service_role roles, and auth.jwt().
 # Nothing else is stubbed - the SQL under test runs exactly as written.
 #
-# Usage:  bash .verify/apply_migrations.sh
+# Usage:  bash .verify/apply_migrations.sh      (run from the repository root)
 # Exit:   0 = all assertions passed; 1 = at least one failed
 # =============================================================================
 set -uo pipefail
@@ -54,6 +57,14 @@ psql_expect_fail() {
 say "=============================================================="
 say " NUVORA migration verification - PostgreSQL $PGVER"
 say "=============================================================="
+
+# The migrations directory is resolved relative to the CWD. Run from anywhere else,
+# the apply loop below silently iterates over nothing and the harness reports a
+# spurious failure. Say so instead of producing a confusing one.
+if [ ! -d "supabase/migrations" ]; then
+  say "ERROR: run this from the repository root (supabase/migrations not found in $PWD)."
+  exit 1
+fi
 
 # --- 1. cluster + database ----------------------------------------------------
 if [ ! -f "$LOCK" ]; then
@@ -227,6 +238,32 @@ OUT=$(psql_expect_fail "insert into public.webhook_events (provider,event_id,eve
 echo "$OUT" | grep -qiE "webhook_events_provider_event_idx|duplicate key" \
   && ok "DB refuses a replayed webhook event (idempotent by constraint)" \
   || bad "duplicate webhook event was accepted"
+
+# --- 11. webhook_events processed-consistency --------------------------------
+# Added with the Stage 6 fix. The constraint in 20261011090400 originally FORBADE the
+# normal success state - setting processed_at alone violated it - which would have broken
+# the last step of the money-critical path on every webhook. A first correction then
+# forced exactly one of the two columns and FORBADE the freshly-received row. These four
+# assertions pin all four lifecycle states so neither mistake can come back.
+say ""
+say "-- webhook_events processed consistency --"
+
+OUT=$(psql_run "insert into public.webhook_events (provider,event_id,event_type,signature_valid,payload,processed_at) values ('paystack','evt-xor-ok','charge.success',true,'{}'::jsonb,now());")
+[ -z "$OUT" ] && ok "webhook event CAN be marked processed (processed_at set, no error)" \
+  || bad "marking a webhook event processed was REFUSED: $OUT"
+
+OUT=$(psql_run "insert into public.webhook_events (provider,event_id,event_type,signature_valid,payload,processing_error) values ('paystack','evt-xor-fail','charge.success',true,'{}'::jsonb,'gateway unreachable');")
+[ -z "$OUT" ] && ok "webhook event CAN be marked failed for retry (processing_error set)" \
+  || bad "marking a webhook event failed was REFUSED: $OUT"
+
+OUT=$(psql_run "insert into public.webhook_events (provider,event_id,event_type,signature_valid,payload) values ('paystack','evt-xor-neither','charge.success',true,'{}'::jsonb);")
+[ -z "$OUT" ] && ok "a freshly received event is ACCEPTED before processing (neither column set)" \
+  || bad "a newly received webhook event was REFUSED, so inserts would fail in production: $OUT"
+
+OUT=$(psql_expect_fail "insert into public.webhook_events (provider,event_id,event_type,signature_valid,payload,processed_at,processing_error) values ('paystack','evt-xor-both','charge.success',true,'{}'::jsonb,now(),'also an error');")
+echo "$OUT" | grep -qi "webhook_events_processed_consistent" \
+  && ok "DB refuses an event that is both processed and errored" \
+  || bad "an event marked both processed and errored was accepted"
 
 # The audit trigger must fire on every table it is attached to.
 AC=$(psql_val "select count(distinct entity_table) from public.audit_log where entity_table in ('orders','order_items','payments','products','product_prices');")
