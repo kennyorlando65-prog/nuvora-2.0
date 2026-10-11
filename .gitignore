@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# builds
+.next/
+out/
+build/
+dist/
+
+# local env files - NEVER commit real values
+.env
+.env.*
+!.env.example
+
+# vercel
+.vercel
+
+# logs
+*.log
+npm-debug.log*
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# supabase local stack
+supabase/.branches
+supabase/.temp
