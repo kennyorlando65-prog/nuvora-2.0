@@ -10,8 +10,10 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "verify": "npm run typecheck && npm run build",
+    "test": "vitest run",
+    "verify": "npm run typecheck && npm run test && npm run build",
     "db:push": "echo 'Apply migrations: supabase db push  (or paste supabase/migrations/*.sql into the Supabase SQL editor in filename order)'",
+    "db:verify": "bash .verify/apply_migrations.sh",
     "db:types": "supabase gen types typescript --project-id <PROJECT_REF> --schema public > lib/db/types.ts"
   },
   "dependencies": {
@@ -29,6 +31,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "tailwindcss": "^4.1.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
   }
 }
