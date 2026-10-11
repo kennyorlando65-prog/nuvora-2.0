@@ -240,7 +240,7 @@ export function createGenericHttpAdapter(config: GenericHttpConfig): SupplierAda
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       throw new ProviderError(
         "malformed_response",
-        `${path} returned ${Array.isArray(value) ? "an array" : typeof value} — expected an object`,
+        `${path} returned ${Array.isArray(value) ? "an array" : typeof value}, expected an object`,
       );
     }
     return value as Record<string, unknown>;
@@ -297,7 +297,9 @@ export function createGenericHttpAdapter(config: GenericHttpConfig): SupplierAda
       failure = {
         code: codeRaw === undefined ? "supplier_error" : String(codeRaw),
         message:
-          messageRaw === undefined ? `supplier reported ${String(statusRaw)}` : String(messageRaw),
+          messageRaw === undefined
+            ? `supplier reported ${String(statusRaw)}`
+            : String(messageRaw),
         // Defaults to false. Assuming a failure is retryable would let a permanently
         // rejected delivery be retried until it hit the attempt ceiling, obscuring the
         // real cause behind a pile of attempts.
@@ -364,10 +366,7 @@ export function createGenericHttpAdapter(config: GenericHttpConfig): SupplierAda
       return {
         supplierReference:
           referenceRaw === undefined ? request.supplierReference : String(referenceRaw),
-        unitCostMinor: minorFrom(
-          readPathRequired(record, config.mapping.response.costMinor ?? "cost_minor", "supplier cost"),
-          "supplier cost",
-        ),
+        unitCostMinor: minorFrom(readPathRequired(record, config.mapping.response.costMinor ?? "cost_minor", "supplier cost"), "supplier cost"),
         currency: currency || request.currency,
         // Absent means available. A supplier that omits the field is offering the product.
         available: availableRaw === undefined ? true : availableRaw !== false,

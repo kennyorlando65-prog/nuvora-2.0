@@ -25,7 +25,7 @@ import { requireAdminColumns } from "@/lib/auth/guard";
 
 export const metadata: Metadata = { title: "Product" };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Product detail and edit.

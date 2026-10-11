@@ -23,8 +23,7 @@ const PROVIDER_OPTIONS: Array<[string, string]> = [
   ["flutterwave", "Flutterwave"],
 ];
 
-const FIELD =
-  "rounded-md border border-line bg-panel-2 px-2.5 py-1.5 text-sm text-ink focus:border-accent focus:outline-none";
+const FIELD = "nuvora-input";
 
 export function OrderFilters({ filters }: { filters: OrderFilters }) {
   return (
@@ -91,13 +90,13 @@ export function OrderFilters({ filters }: { filters: OrderFilters }) {
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
-          className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+          className="nuvora-btn nuvora-btn-primary"
         >
           Apply filters
         </button>
         <Link
           href="/admin/orders"
-          className="rounded-md border border-line bg-panel px-4 py-2 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
+          className="nuvora-btn nuvora-btn-secondary"
         >
           Clear
         </Link>

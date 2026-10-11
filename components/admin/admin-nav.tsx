@@ -10,6 +10,13 @@ import { usePathname } from "next/navigation";
  * `usePathname` is a client hook. Only the navigation is client-side - every admin page
  * behind it is a Server Component, so no order data, cost or margin crosses into the
  * browser bundle.
+ *
+ * THE ACTIVE STATE USES THE TEAL-TINTED SURFACE from the chosen palette, matching the
+ * customer app's navigation exactly. An operator moving between the two surfaces should not
+ * have to relearn which colour means "you are here".
+ *
+ * This navigation is reachable ONLY from inside the admin console. Nothing in the customer
+ * app links to it, and no customer-facing page mentions that it exists.
  */
 
 const LINKS = [
@@ -22,34 +29,52 @@ const LINKS = [
   { href: "/admin/audit", label: "Audit log" },
 ];
 
-export function AdminNav() {
+export function AdminNav({ variant = "sidebar" }: { variant?: "sidebar" | "bar" }) {
   const pathname = usePathname();
 
   const isActive = (href: string) =>
     href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
 
+  if (variant === "bar") {
+    // Phone layout: a horizontal strip that scrolls rather than wraps, so the bar keeps a
+    // predictable height and the content below it does not jump.
+    return (
+      <nav aria-label="Admin sections" className="-mx-4 overflow-x-auto px-4 lg:hidden">
+        <ul className="flex items-center gap-1 whitespace-nowrap">
+          {LINKS.map((link) => {
+            const active = isActive(link.href);
+            return (
+              <li key={link.href}>
+                <Link
+                  href={link.href}
+                  aria-current={active ? "page" : undefined}
+                  className={`nuvora-nav-item ${active ? "nuvora-nav-item-active" : ""}`}
+                >
+                  {link.label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    );
+  }
+
   return (
-    <nav aria-label="Admin sections" className="-mx-5 overflow-x-auto px-5 sm:mx-0 sm:px-0">
-      <ul className="flex items-center gap-1 whitespace-nowrap">
-        {LINKS.map((link) => {
-          const active = isActive(link.href);
-          return (
-            <li key={link.href}>
-              <Link
-                href={link.href}
-                aria-current={active ? "page" : undefined}
-                className={
-                  active
-                    ? "block rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-sm font-medium text-accent"
-                    : "block rounded-md border border-transparent px-3 py-1.5 text-sm text-muted transition-colors hover:border-line hover:text-ink"
-                }
-              >
-                {link.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+    <nav aria-label="Admin sections" className="flex flex-col gap-1">
+      {LINKS.map((link) => {
+        const active = isActive(link.href);
+        return (
+          <Link
+            key={link.href}
+            href={link.href}
+            aria-current={active ? "page" : undefined}
+            className={`nuvora-nav-item ${active ? "nuvora-nav-item-active" : ""}`}
+          >
+            {link.label}
+          </Link>
+        );
+      })}
     </nav>
   );
 }

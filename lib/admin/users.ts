@@ -101,8 +101,7 @@ export async function listAccounts(
     moderationByUser.set(row.user_id as string, row);
   }
 
-  // Order counts for the same page, again in one query per user but issued concurrently.
-  // `head: true` avoids transferring rows.
+  // Order counts for the same page, again in one query. `head: true` avoids transferring rows.
   const counts = new Map<string, number>();
   await Promise.all(
     ids.map(async (id) => {

@@ -20,8 +20,7 @@ import {
  * have nothing to validate against.
  */
 
-const FIELD =
-  "rounded-md border border-line bg-panel-2 px-3 py-2 text-sm text-ink placeholder:text-dim focus:border-accent focus:outline-none";
+const FIELD = "nuvora-input";
 
 const PRODUCT_LINES: Array<[string, string]> = [
   ["esim", "eSIM"],
@@ -382,7 +381,7 @@ export function ProductForm({
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="submit"
-          className="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+          className="nuvora-btn nuvora-btn-primary"
         >
           {submitLabel}
         </button>
