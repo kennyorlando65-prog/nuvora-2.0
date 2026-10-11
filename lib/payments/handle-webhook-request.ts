@@ -6,6 +6,7 @@ import { getGatewayForWebhook, isWebhookProvider } from "./index";
 import { getServiceRoleClient } from "@/lib/supabase/server";
 import { createSupabaseWebhookStore } from "./supabase-store";
 import { processWebhook } from "./webhook";
+import { fulfilOrderLines } from "@/lib/fulfilment/fulfil-order";
 import type { WebhookProvider } from "./types";
 
 /**
@@ -75,6 +76,42 @@ export async function handleWebhookRequest(
 
   // Operator visibility: the outcome and the reason, never the payload or a key.
   console.log(`[webhook:${provider}] ${result.outcome} - ${result.detail}`);
+
+  // -- fulfilment ---------------------------------------------------------------
+  // A verified payment now has a consequence. This is the step whose absence meant a customer
+  // could be charged and receive nothing.
+  //
+  // WHY THIS IS CATCH-AND-LOG RATHER THAN THROW. The payment is already recorded by the time
+  // we get here, so returning 5xx would tell the gateway to resend an event we have already
+  // handled - correct for the payment, noisy for the gateway, and no more reliable for the
+  // delivery than the paths that exist for it. Fulfilment has its own retry machinery: the
+  // idempotent retry below, the supplier callback receiver, the admin retry, and the attempt
+  // ceiling that surfaces a stuck line to an operator. A failure here is therefore reported
+  // loudly in the logs and left to that machinery rather than escalating into a gateway retry
+  // storm.
+  if ((result.outcome === "paid" || result.outcome === "already_paid") && result.orderId) {
+    try {
+      const report = await fulfilOrderLines(getServiceRoleClient(), {
+        orderId: result.orderId,
+        trigger: "payment_webhook",
+      });
+
+      const delivered = report.lines.filter((line) => line.delivered).length;
+      console.log(
+        `[webhook:${provider}] fulfilment for ${report.orderNumber}: ` +
+          `${delivered}/${report.lines.length} delivered, order now ${report.orderStatus ?? "unchanged"}` +
+          (report.needsHuman > 0 ? `, ${report.needsHuman} line(s) need an operator` : ""),
+      );
+    } catch (error) {
+      // Deliberately swallowed after logging. See the note above: a delivery problem must not
+      // be reported to the gateway as a payment problem.
+      console.error(
+        `[webhook:${provider}] fulfilment failed for order ${result.orderId}; ` +
+          "the payment is recorded and the delivery can be retried from the admin order page.",
+        error,
+      );
+    }
+  }
 
   return NextResponse.json(
     { received: true },

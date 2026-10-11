@@ -85,6 +85,14 @@ export type WebhookOutcome =
 
 export type WebhookResult = {
   outcome: WebhookOutcome;
+  /**
+   * The order this event concerned, when it could be resolved.
+   *
+   * Added so the caller can act on a verified payment rather than only record it. Before this,
+   * the route knew a payment had succeeded but not which order to fulfil, which is why a paid
+   * order used to stop dead at 'paid'.
+   */
+  orderId?: string;
   /** Operator-facing detail. Never returned verbatim to the gateway body.
    *  Deliberately contains no card data, no key and no raw payload. */
   detail: string;
@@ -262,6 +270,10 @@ export async function processWebhook(args: ProcessWebhookArgs): Promise<WebhookR
     await store.markEventProcessed({ id: record.id });
     return {
       outcome: "already_paid",
+      // Carried through deliberately: a gateway retrying an event is a free recovery path for a
+      // fulfilment that failed on the first delivery of the same event. Fulfilment is idempotent
+      // per line and skips completed lines, so re-running it is safe.
+      orderId: order.id,
       detail: `${order.orderNumber} already has a succeeded payment. No second payment recorded.`,
       httpStatus: 200,
     };
@@ -287,6 +299,7 @@ export async function processWebhook(args: ProcessWebhookArgs): Promise<WebhookR
 
   return {
     outcome: "paid",
+    orderId: order.id,
     detail: `Order ${order.orderNumber} verified and marked paid.`,
     httpStatus: 200,
   };
