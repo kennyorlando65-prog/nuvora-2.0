@@ -102,8 +102,8 @@ export default async function AdminProviderDetailPage({
               type="submit"
               className={
                 provider.is_active
-                  ? "rounded-md border border-bad/50 bg-panel px-4 py-2 text-sm text-ink transition-colors hover:border-bad"
-                  : "rounded-md bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+                  ? "nuvora-btn nuvora-btn-secondary border-bad/50"
+                  : "nuvora-btn nuvora-btn-primary"
               }
             >
               {provider.is_active ? "Disable provider" : "Enable provider"}
@@ -214,7 +214,7 @@ export default async function AdminProviderDetailPage({
           <input type="hidden" name="key" value={provider.key} />
           <button
             type="submit"
-            className="rounded-md border border-bad/50 bg-panel px-4 py-2 text-sm text-ink transition-colors hover:border-bad"
+            className="nuvora-btn nuvora-btn-secondary border-bad/50"
           >
             Delete provider
           </button>
