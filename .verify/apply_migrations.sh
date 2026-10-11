@@ -18,6 +18,9 @@
 #  11. a webhook event may be freshly received, processed, or failed - and may never
 #      be both processed and errored (the Stage 6 constraint fix, which was caught
 #      only because these assertions were run rather than reasoned about)
+#  12. the supplier callback receiver: a signed path with no secret is refused, an
+#      unverified callback is still recorded, a replay is refused, an orphaned event
+#      is refused, and processed-or-errored-never-both
 #
 # The migration files target Supabase, so a shim supplies only what a bare
 # PostgreSQL lacks: the anon/authenticated/service_role roles, and auth.jwt().
@@ -166,7 +169,7 @@ say ""
 say "-- security invariants --"
 
 # --- 4. tables exist ---------------------------------------------------------
-for t in products pricing_rules product_prices suppliers orders order_items payments webhook_events audit_log app_settings user_moderation fulfilment_attempts; do
+for t in products pricing_rules product_prices suppliers orders order_items payments webhook_events audit_log app_settings user_moderation fulfilment_attempts supplier_webhook_events; do
   C=$(psql_val "select count(*) from information_schema.tables where table_schema='public' and table_name='$t';")
   [ "$C" = "1" ] && ok "table public.$t exists" || bad "table public.$t MISSING"
 done
@@ -215,7 +218,7 @@ for t in orders order_items payments; do
   done
 done
 R=$(psql_val "select has_table_privilege('anon','public.orders','insert');")
-[ "$R" = "f" ] && ok "anon CANNOT insert orders" || bad "anon CAN insert orders"
+[ "$R" = "f" ] && ok "anon CANNOT insert orders" || bad "anon can insert orders"
 
 # --- 9. audit log is append-only --------------------------------------------
 R=$(psql_val "select has_table_privilege('service_role','public.audit_log','update');")
@@ -460,6 +463,83 @@ echo "$OUT" | grep -qi "suppliers_live_requires_endpoint" \
 OUT=$(psql_expect_fail "insert into public.products (sku,slug,name,product_line,currency,base_price_minor,supplier_key,supplier_cost_minor) values ('RBAC-Y','rbac-y','Y','esim','NGN',100,'no-such-supplier',50);")
 echo "$OUT" | grep -qiE "products_supplier_exists|foreign key" \
   && ok "DB refuses a product naming a supplier that does not exist" || bad "a product with an unknown supplier was accepted: $OUT"
+
+say ""
+say "-- supplier callback receiver (20261011091100) --"
+
+# The receiver's invariants. These matter more than most: a supplier callback is an inbound,
+# unauthenticated request that can move an order to delivered, so the rules around it are the
+# difference between an integration and an open door.
+psql_run "insert into public.suppliers (key,name,adapter,supported_lines,implementation,mode) values ('cb-supplier','Callback Supplier','generic-http','{esim}','generic-http','sandbox');" >/dev/null
+
+# A provider accepting SIGNED callbacks must hold the secret to verify them against. Without
+# this, the receiver would have nothing to compare a signature to, and the honest outcomes would
+# be either reject everything or accept everything.
+OUT=$(psql_expect_fail "update public.suppliers set webhook_path='/callbacks/cb-supplier', webhook_signature_scheme='hmac_sha256_hex' where key='cb-supplier';")
+echo "$OUT" | grep -qi "suppliers_callback_requires_secret" \
+  && ok "DB refuses a signed callback path with no stored webhook secret" \
+  || bad "a signed callback was configured with no secret: $OUT"
+
+# And the same update must SUCCEED once a secret is present, or the constraint would be
+# blocking the feature rather than protecting it.
+OUT=$(psql_run "update public.suppliers set webhook_path='/callbacks/cb-supplier', webhook_signature_scheme='hmac_sha256_hex', webhook_secret_ciphertext='v1:test:test:test' where key='cb-supplier';")
+[ -z "$OUT" ] && ok "DB accepts a signed callback path once a secret is stored" \
+  || bad "a correctly configured signed callback was refused: $OUT"
+
+# No client role may read the callback ledger, admins included: it holds supplier identifiers and
+# raw callbacks, and the surface that needs it is the fulfilment ledger.
+for priv in select insert update delete; do
+  R=$(psql_val "select has_table_privilege('anon','public.supplier_webhook_events','$priv');")
+  [ "$R" = "f" ] && ok "anon CANNOT $priv supplier_webhook_events" || bad "anon CAN $priv supplier_webhook_events"
+done
+for priv in select insert update delete; do
+  R=$(psql_val "select has_table_privilege('authenticated','public.supplier_webhook_events','$priv');")
+  [ "$R" = "f" ] && ok "authenticated CANNOT $priv supplier_webhook_events (admins included)" || bad "authenticated CAN $priv supplier_webhook_events"
+done
+
+# A verified event can be recorded and marked processed.
+OUT=$(psql_run "insert into public.supplier_webhook_events (provider_key,provider_mode,event_id,event_type,signature_valid,signature_scheme,payload,processed_at) values ('verify-supplier','sandbox','evt-supp-done','activation',true,'none','{}'::jsonb,now());")
+[ -z "$OUT" ] && ok "a verified supplier event can be recorded and processed" \
+  || bad "recording a processed supplier event was refused: $OUT"
+
+# A FAILED signature must still be recordable. A run of invalid signatures is an incident worth
+# being able to see, so discarding them would destroy the evidence.
+OUT=$(psql_run "insert into public.supplier_webhook_events (provider_key,provider_mode,event_id,event_type,signature_valid,signature_scheme,payload) values ('verify-supplier','sandbox','evt-supp-unsigned','activation',false,'hmac_sha256_hex','{}'::jsonb);")
+[ -z "$OUT" ] && ok "an unverified supplier event is still recorded (incident trail)" \
+  || bad "an unverified supplier event could not be recorded: $OUT"
+
+R=$(psql_val "select signature_valid from public.supplier_webhook_events where event_id='evt-supp-unsigned';")
+[ "$R" = "f" ] && ok "the unverified event is stored with signature_valid false" \
+  || bad "signature_valid was not preserved (got '$R')"
+
+# A failed event records processing_error instead.
+OUT=$(psql_run "insert into public.supplier_webhook_events (provider_key,provider_mode,event_id,event_type,signature_valid,signature_scheme,payload,processing_error) values ('verify-supplier','sandbox','evt-supp-err','activation',true,'none','{}'::jsonb,'no matching order line');")
+[ -z "$OUT" ] && ok "a supplier event can be recorded as failed for the sweep" \
+  || bad "recording a failed supplier event was refused: $OUT"
+
+# The replay guard: a supplier retrying an event must not be processed twice.
+OUT=$(psql_expect_fail "insert into public.supplier_webhook_events (provider_key,provider_mode,event_id,event_type,signature_valid,signature_scheme,payload) values ('verify-supplier','sandbox','evt-supp-done','activation',true,'none','{}'::jsonb);")
+echo "$OUT" | grep -qiE "supplier_webhook_events_provider_event_idx|duplicate key" \
+  && ok "DB refuses a replayed supplier event (at-most-once processing)" \
+  || bad "a duplicate supplier event was accepted: $OUT"
+
+# Same consistency rule as the gateway ledger: processed or errored, never both.
+OUT=$(psql_expect_fail "insert into public.supplier_webhook_events (provider_key,provider_mode,event_id,event_type,signature_valid,signature_scheme,payload,processed_at,processing_error) values ('verify-supplier','sandbox','evt-supp-both','activation',true,'none','{}'::jsonb,now(),'and an error');")
+echo "$OUT" | grep -qi "supplier_webhook_events_processed_consistent" \
+  && ok "DB refuses a supplier event marked both processed and errored" \
+  || bad "a supplier event was both processed and errored: $OUT"
+
+# A freshly received event - neither column set - must be accepted, since that is the state every
+# callback arrives in. A constraint that forbade it would break the receiver on first contact.
+OUT=$(psql_run "insert into public.supplier_webhook_events (provider_key,provider_mode,event_id,event_type,signature_valid,signature_scheme,payload) values ('verify-supplier','sandbox','evt-supp-fresh','activation',true,'none','{}'::jsonb);")
+[ -z "$OUT" ] && ok "a freshly received supplier event is accepted before processing" \
+  || bad "a newly received supplier event was refused, so the receiver would fail: $OUT"
+
+# An event may not be attributed to a provider that does not exist: it could not be investigated.
+OUT=$(psql_expect_fail "insert into public.supplier_webhook_events (provider_key,provider_mode,event_id,event_type,signature_valid,signature_scheme,payload) values ('no-such-provider','sandbox','evt-orphan','activation',true,'none','{}'::jsonb);")
+echo "$OUT" | grep -qiE "foreign key|supplier_webhook_events_provider_key_fkey" \
+  && ok "DB refuses a supplier event for a provider that does not exist" \
+  || bad "an orphaned supplier event was accepted: $OUT"
 
 say ""
 say "=============================================================="
