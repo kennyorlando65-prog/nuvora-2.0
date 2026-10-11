@@ -18,10 +18,13 @@
 #  11. a webhook event may be freshly received, processed, or failed - and may never
 #      be both processed and errored (the Stage 6 constraint fix, which was caught
 #      only because these assertions were run rather than reasoned about)
+#  12. a non-admin cannot read another user's order, pricing_rules or private
+#      settings, and cannot write a setting, a product or the audit log - while the
+#      checkout path and the public storefront still work (Stage 7 RBAC assertions)
 #
 # The migration files target Supabase, so a shim supplies only what a bare
-# PostgreSQL lacks: the anon/authenticated/service_role roles, and auth.jwt().
-# Nothing else is stubbed - the SQL under test runs exactly as written.
+# PostgreSQL lacks: the anon/authenticated/service_role roles, auth.users, and
+# auth.jwt(). Nothing else is stubbed - the SQL under test runs exactly as written.
 #
 # Usage:  bash .verify/apply_migrations.sh      (run from the repository root)
 # Exit:   0 = all assertions passed; 1 = at least one failed
@@ -119,12 +122,29 @@ begin
   end if;
 end $$;
 create schema if not exists auth;
+-- auth.users is owned by GoTrue in a real project and cannot be created by a migration.
+-- The shim provides the minimum a foreign key needs: an id and an email. Without it the
+-- FK from public.user_moderation cannot be exercised, and an untested foreign key is
+-- indistinguishable from a missing one.
+create table if not exists auth.users (
+  id    uuid primary key,
+  email text unique
+);
 -- Modelled on Supabase's auth.jwt(): reads the claims a request carries. In a real
 -- project this is populated by PostgREST from the verified access token.
 create or replace function auth.jwt() returns jsonb
 language sql stable as $$
   select coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb
 $$;
+
+-- USAGE on schema auth is a REAL dependency of the security model, not shim scaffolding.
+-- Every RLS policy calls public.is_admin() or public.current_user_id(), and both read
+-- auth.jwt(). If the caller lacks USAGE on schema auth, those functions raise
+-- "permission denied for schema auth" - which in a policy means the query FAILS rather
+-- than returning no rows. Supabase grants USAGE on auth to anon/authenticated by default,
+-- so this holds in production; the shim has to mirror it or it tests a world that does
+-- not exist. Found by these assertions, which is exactly what they are for.
+grant usage on schema auth to anon, authenticated, service_role;
 SQL
 su postgres -c "psql -qX -v ON_ERROR_STOP=1 -d $DB -f /tmp/nuvora_shim.sql" >/dev/null 2>&1 \
   && ok "shim applied" || { bad "shim failed"; exit 1; }
@@ -149,7 +169,7 @@ say ""
 say "-- security invariants --"
 
 # --- 4. tables exist ---------------------------------------------------------
-for t in products pricing_rules product_prices suppliers orders order_items payments webhook_events audit_log; do
+for t in products pricing_rules product_prices suppliers orders order_items payments webhook_events audit_log app_settings user_moderation fulfilment_attempts; do
   C=$(psql_val "select count(*) from information_schema.tables where table_schema='public' and table_name='$t';")
   [ "$C" = "1" ] && ok "table public.$t exists" || bad "table public.$t MISSING"
 done
@@ -299,6 +319,105 @@ AC=$(psql_val "select count(distinct entity_table) from public.audit_log where e
 psql_run "update public.payments set raw_payload = '{\"sentinel\":\"NUVORA_SENTINEL_RAW_PAYLOAD\"}'::jsonb where order_id='$OID';" >/dev/null
 RP=$(psql_val "select count(*) from public.audit_log where after::text like '%NUVORA_SENTINEL_RAW_PAYLOAD%' or before::text like '%NUVORA_SENTINEL_RAW_PAYLOAD%';")
 [ "$RP" = "0" ] && ok "raw_payload is redacted out of the audit trail" || bad "raw_payload LEAKED into audit_log ($RP rows)"
+
+say ""
+say "-- admin RBAC: does RLS actually block a non-admin? --"
+
+# Everything above proves the GRANT layer. These assertions prove the POLICY layer, by
+# assuming the role in a transaction and asking the database. `set local role authenticated`
+# drops superuser for the duration, so row level security is genuinely enforced - checking
+# has_column_privilege() says nothing about whether a policy returns the wrong rows.
+ADMIN_UUID='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+OTHER_UUID='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
+
+psql_run "insert into auth.users (id,email) values ('$ADMIN_UUID','owner@example.com'),('$OTHER_UUID','stranger@example.com') on conflict do nothing;" >/dev/null
+
+psql_run "insert into public.user_moderation (user_id,email,status) values ('$OTHER_UUID','stranger@example.com','active') on conflict (user_id) do nothing;" >/dev/null
+
+psql_run "insert into public.orders (user_id,email,currency,subtotal_minor,total_minor,idempotency_key,engine_version) values ('$ADMIN_UUID','owner@example.com','NGN',100,100,'rbac-key-0001','1.0.0');" >/dev/null
+
+JWT_OWNER="'{\"sub\":\"$ADMIN_UUID\",\"role\":\"authenticated\"}'"
+JWT_OTHER="'{\"sub\":\"$OTHER_UUID\",\"role\":\"authenticated\"}'"
+JWT_ADMIN="'{\"sub\":\"$ADMIN_UUID\",\"role\":\"authenticated\",\"app_metadata\":{\"nuvora_role\":\"admin\"}}'"
+
+R=$(psql_val "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OWNER, true); select count(*) from public.orders where user_id='$ADMIN_UUID'; rollback;")
+[ "$(echo "$R" | tail -1)" = "1" ] && ok "a signed-in user CAN read their OWN order" || bad "owner could not read their own order (got '$R')"
+
+R=$(psql_val "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); select count(*) from public.orders where user_id='$ADMIN_UUID'; rollback;")
+[ "$(echo "$R" | tail -1)" = "0" ] && ok "a non-admin CANNOT read another user's order (RLS policy holds)" || bad "ORDER LEAK: non-admin saw $R row(s)"
+
+R=$(psql_val "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_ADMIN, true); select count(*) from public.orders where user_id='$ADMIN_UUID'; rollback;")
+[ "$(echo "$R" | tail -1)" = "1" ] && ok "an admin CAN read the order (is_admin() drives the policy)" || bad "admin could not read the order (got '$R')"
+
+R=$(psql_val "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); select count(*) from public.pricing_rules; rollback;")
+[ "$(echo "$R" | tail -1)" = "0" ] && ok "a non-admin CANNOT read pricing_rules (margin secrecy)" || bad "MARGIN LEAK: non-admin read $R rule(s)"
+
+R=$(psql_val "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); select count(*) from public.app_settings where not is_public; rollback;")
+[ "$(echo "$R" | tail -1)" = "0" ] && ok "a non-admin CANNOT read private app settings" || bad "SETTINGS LEAK: non-admin read $R private setting(s)"
+
+R=$(psql_val "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); select count(*) from public.app_settings where is_public; rollback;")
+# tail -1: `select set_config(...)` PRINTS the config value, so the capture holds the JWT
+# on the first line and the count on the last. Comparing the whole capture against an
+# integer is a shell error, not a test failure, and the -gt guard then silently misreads.
+PC=$(echo "$R" | tail -1)
+[ "${PC:-0}" -gt 0 ] && ok "a visitor CAN read public settings (the storefront still renders)" || bad "public settings are unreadable - the footer would break (got '$PC')"
+
+# Writes: a non-admin must not be able to change a setting or insert a product.
+OUT=$(psql_expect_fail "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); update public.app_settings set value='\"pwned\"'::jsonb where key='business.legal_name'; rollback;")
+echo "$OUT" | grep -qiE "permission denied|violates row-level security" \
+  && ok "a non-admin CANNOT write app_settings" || bad "a non-admin WROTE a setting: $OUT"
+
+OUT=$(psql_expect_fail "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); insert into public.products (sku,slug,name,product_line,currency,base_price_minor,supplier_key,supplier_cost_minor,status) values ('RBAC-X','rbac-x','X','esim','NGN',100,'verify-supplier',50,'active'); rollback;")
+echo "$OUT" | grep -qiE "permission denied|violates row-level security" \
+  && ok "a non-admin CANNOT insert a product" || bad "a non-admin INSERTED a product: $OUT"
+
+# The audit helper is the one function an admin session must be able to call, and it must
+# refuse everybody else. Both directions are asserted, because a helper that refuses the
+# admin is as broken as one that admits a stranger.
+OUT=$(psql_expect_fail "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); select public.log_admin_action('settings.update','app_settings','business.legal_name'); rollback;")
+echo "$OUT" | grep -qiE "not authorised|permission denied" \
+  && ok "log_admin_action REFUSES a non-admin" || bad "a non-admin wrote the audit log: $OUT"
+
+# NOTE THE ABSENT ROLLBACK, and an earlier version of this assertion had one. Rolling back
+# discarded the audit row, so the very next check - "does the row carry the real actor?" -
+# could never find it and failed for a reason that had nothing to do with the product. An
+# append-only audit log cannot be cleaned up in a verifying transaction anyway, and
+# asserting against a committed row is the stronger test. Test data accumulating in a
+# throwaway database is a non-issue; a test that cannot see what it just wrote is not.
+#
+# No before/after JSON is passed on purpose. This assertion is about authorisation and
+# actor stamping, and keeping JSON literals out of the SQL removes a whole layer of shell
+# quoting - which is exactly how the previous version of this line acquired escaped quotes
+# and became a bash syntax error that a bare syntax check caught only because it was run.
+AID=$(psql_val "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_ADMIN, true); select public.log_admin_action('settings.update','app_settings','business.legal_name'); commit;")
+echo "$AID" | tail -1 | grep -qE '^[0-9]+$' \
+  && ok "log_admin_action ACCEPTS an admin and returns the audit row id" || bad "admin could not write the audit log: $AID"
+
+# The audit row just written must carry the ACTOR FROM THE JWT, not a value the caller
+# supplied - otherwise the trail records assertions rather than facts.
+AC=$(psql_val "select count(*) from public.audit_log where action='settings.update' and actor_user_id='$ADMIN_UUID';")
+[ "${AC:-0}" -ge 1 ] && ok "the audit row records the real actor from the JWT" || bad "audit actor was not stamped from the JWT"
+
+# Credential columns must be unreadable by a client role even with the admin claim.
+R=$(psql_val "select has_column_privilege('authenticated','public.suppliers','credential_ciphertext','select');")
+[ "$R" = "f" ] && ok "authenticated CANNOT read suppliers.credential_ciphertext" || bad "CREDENTIAL LEAK: ciphertext is client-readable"
+R=$(psql_val "select has_column_privilege('authenticated','public.suppliers','webhook_secret_ciphertext','select');")
+[ "$R" = "f" ] && ok "authenticated CANNOT read suppliers.webhook_secret_ciphertext" || bad "WEBHOOK SECRET LEAK"
+R=$(psql_val "select has_column_privilege('authenticated','public.suppliers','credential_hint','select');")
+[ "$R" = "t" ] && ok "authenticated CAN read suppliers.credential_hint (masked indicator works)" || bad "the masked credential indicator cannot render"
+
+# An enabled live provider with no endpoint is a trap: the first order fails at the worst
+# possible moment. The schema refuses the configuration rather than the order.
+psql_run "insert into public.suppliers (key,name,adapter,supported_lines,implementation,mode) values ('rbac-supplier','RBAC Supplier','generic-http','{esim}','generic-http','live');" >/dev/null
+OUT=$(psql_expect_fail "update public.suppliers set is_active=true where key='rbac-supplier';")
+echo "$OUT" | grep -qi "suppliers_live_requires_endpoint" \
+  && ok "DB refuses to ENABLE a live provider with no endpoint or key" || bad "an unusable live provider was enabled: $OUT"
+
+# And a product may not name a supplier that does not exist, because fulfilment resolves
+# the adapter by that key - the order would be paid and then undeliverable.
+OUT=$(psql_expect_fail "insert into public.products (sku,slug,name,product_line,currency,base_price_minor,supplier_key,supplier_cost_minor) values ('RBAC-Y','rbac-y','Y','esim','NGN',100,'no-such-supplier',50);")
+echo "$OUT" | grep -qiE "products_supplier_exists|foreign key" \
+  && ok "DB refuses a product naming a supplier that does not exist" || bad "a product with an unknown supplier was accepted: $OUT"
 
 say ""
 say "=============================================================="
