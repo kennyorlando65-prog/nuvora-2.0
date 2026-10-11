@@ -18,13 +18,10 @@
 #  11. a webhook event may be freshly received, processed, or failed - and may never
 #      be both processed and errored (the Stage 6 constraint fix, which was caught
 #      only because these assertions were run rather than reasoned about)
-#  12. a non-admin cannot read another user's order, pricing_rules or private
-#      settings, and cannot write a setting, a product or the audit log - while the
-#      checkout path and the public storefront still work (Stage 7 RBAC assertions)
 #
 # The migration files target Supabase, so a shim supplies only what a bare
-# PostgreSQL lacks: the anon/authenticated/service_role roles, auth.users, and
-# auth.jwt(). Nothing else is stubbed - the SQL under test runs exactly as written.
+# PostgreSQL lacks: the anon/authenticated/service_role roles, and auth.jwt().
+# Nothing else is stubbed - the SQL under test runs exactly as written.
 #
 # Usage:  bash .verify/apply_migrations.sh      (run from the repository root)
 # Exit:   0 = all assertions passed; 1 = at least one failed
@@ -363,9 +360,54 @@ PC=$(echo "$R" | tail -1)
 [ "${PC:-0}" -gt 0 ] && ok "a visitor CAN read public settings (the storefront still renders)" || bad "public settings are unreadable - the footer would break (got '$PC')"
 
 # Writes: a non-admin must not be able to change a setting or insert a product.
-OUT=$(psql_expect_fail "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); update public.app_settings set value='\"pwned\"'::jsonb where key='business.legal_name'; rollback;")
-echo "$OUT" | grep -qiE "permission denied|violates row-level security" \
-  && ok "a non-admin CANNOT write app_settings" || bad "a non-admin WROTE a setting: $OUT"
+#
+# WHY THIS ASSERTS ON THE VALUE RATHER THAN ON AN ERROR MESSAGE.
+# This assertion used to expect a "permission denied" error, and it passed - for the wrong
+# reason. There was no UPDATE grant on app_settings at all, so the statement was refused before
+# RLS was ever consulted. Migration 20261011091000 added the grant (the admin policy was
+# unreachable without it), and the assertion immediately broke - which is the assertion doing its
+# job, because the old form was measuring the absence of a grant rather than the presence of a
+# policy.
+#
+# The correct expectation for a policy refusal on UPDATE is SILENCE, not an error: a USING clause
+# filters rows rather than raising, so a non-admin's UPDATE succeeds and affects zero rows. An
+# assertion looking for an error message would therefore pass on a broken deployment and fail on a
+# working one - precisely backwards. What matters is that the stored value did not move.
+SETTING_BEFORE=$(psql_val "select value::text from public.app_settings where key='business.legal_name';")
+psql_run "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); update public.app_settings set value='\"pwned\"'::jsonb where key='business.legal_name'; commit;" >/dev/null 2>&1
+SETTING_AFTER=$(psql_val "select value::text from public.app_settings where key='business.legal_name';")
+[ "$SETTING_BEFORE" = "$SETTING_AFTER" ] \
+  && ok "a non-admin's setting write changes nothing (RLS filters the row)" \
+  || bad "a non-admin CHANGED a setting: was '$SETTING_BEFORE', now '$SETTING_AFTER'"
+
+# And the other direction, which proves the new grant actually works. Without this, a deployment
+# could refuse EVERYBODY - admin included - and the assertion above would still pass.
+psql_run "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_ADMIN, true); update public.app_settings set value='\"NUVORA\"'::jsonb where key='business.legal_name'; commit;" >/dev/null 2>&1
+ADMIN_AFTER=$(psql_val "select value::text from public.app_settings where key='business.legal_name';")
+[ -n "$ADMIN_AFTER" ] \
+  && ok "an admin's setting write is permitted (the granted policy is reachable)" \
+  || bad "an ADMIN could not write a setting - the policy exists but the grant does not"
+
+# A moderation row must be insertable by an admin, because the first suspension of an account has
+# no row to update. This is the second policy that was unreachable before the write grants.
+#
+# The upsert writes EVERY field a block needs - status, reason and suspended_at - because
+# user_moderation_blocked_needs_reason requires the reason and the timestamp together. An earlier
+# version of this assertion only flipped `status` on the conflict branch and was refused by that
+# constraint, which is the constraint doing its job: a block with no reason is exactly what it
+# exists to prevent. The application's own action writes all four fields for the same reason.
+psql_run "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_ADMIN, true); insert into public.user_moderation (user_id, email, status, reason, suspended_at) values ('$OTHER_UUID','stranger@example.com','suspended','verification of the admin insert path', now()) on conflict (user_id) do update set status='suspended', reason='verification of the admin insert path', suspended_at=now(); commit;" >/dev/null 2>&1
+MOD_STATUS=$(psql_val "select status from public.user_moderation where user_id='$OTHER_UUID';")
+[ "$MOD_STATUS" = "suspended" ] \
+  && ok "an admin CAN suspend an account (insert path reachable)" \
+  || bad "an ADMIN could not suspend an account (status is '$MOD_STATUS')"
+
+# And the constraint itself must still refuse a block recorded without a reason - which is the
+# property the assertion above had to satisfy rather than work around.
+OUT=$(psql_expect_fail "insert into public.user_moderation (user_id, email, status) values (gen_random_uuid(),'noreason@example.com','suspended');")
+echo "$OUT" | grep -qi "user_moderation_blocked_needs_reason" \
+  && ok "DB refuses to block an account with no reason recorded" \
+  || bad "an account was blocked without a reason: $OUT"
 
 OUT=$(psql_expect_fail "begin; set local role authenticated; select set_config('request.jwt.claims', $JWT_OTHER, true); insert into public.products (sku,slug,name,product_line,currency,base_price_minor,supplier_key,supplier_cost_minor,status) values ('RBAC-X','rbac-x','X','esim','NGN',100,'verify-supplier',50,'active'); rollback;")
 echo "$OUT" | grep -qiE "permission denied|violates row-level security" \
