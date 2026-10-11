@@ -103,10 +103,13 @@ create table public.webhook_events (
 
   constraint webhook_events_event_id_present check (length(event_id) between 1 and 200),
   constraint webhook_events_attempts_non_negative check (attempts >= 0),
-  -- An event may not be recorded as processed without a timestamp, nor carry an error
-  -- once it has succeeded.
+  -- Lifecycle: received (both null) -> processed (processed_at set) OR failed
+  -- (processing_error set). An event that is BOTH processed and errored is
+  -- contradictory and is refused. "Neither set" must stay LEGAL: the row is inserted
+  -- the moment a webhook arrives, before it has been acted upon, so a rule demanding
+  -- exactly one of the two would reject every event at insertion.
   constraint webhook_events_processed_consistent
-    check ((processed_at is null) <> (processing_error is not null) or (processed_at is null and processing_error is null))
+    check (processed_at is null or processing_error is null)
 );
 
 comment on table public.webhook_events is
