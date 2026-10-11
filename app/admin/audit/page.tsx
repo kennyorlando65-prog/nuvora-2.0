@@ -134,7 +134,7 @@ export default async function AdminAuditPage({
               {page > 1 && (
                 <a
                   href={`/admin/audit?page=${page - 1}`}
-                  className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
+                  className="nuvora-btn nuvora-btn-secondary px-3 py-1.5"
                 >
                   Newer
                 </a>
@@ -142,7 +142,7 @@ export default async function AdminAuditPage({
               {hasMore && (
                 <a
                   href={`/admin/audit?page=${page + 1}`}
-                  className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
+                  className="nuvora-btn nuvora-btn-secondary px-3 py-1.5"
                 >
                   Older
                 </a>
