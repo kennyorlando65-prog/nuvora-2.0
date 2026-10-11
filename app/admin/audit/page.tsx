@@ -11,44 +11,37 @@ const PAGE_SIZE = 50;
 /**
  * The admin action trail.
  *
- * READ-ONLY, AND THAT IS ENFORCED BY THE DATABASE. `service_role` has no UPDATE or DELETE grant
- * on audit_log, so not even a server-side mistake can edit history - the harness asserts both.
- * This page therefore offers no controls at all, because there are none to offer.
+ * This is the read side of `log_admin_action`, which stamps the actor from the VERIFIED JWT
+ * rather than accepting an actor id from the caller. That distinction is the whole reason the
+ * trail is worth reading: every row below identifies a real session, not an assertion.
  *
- * WHAT MAKES THE ACTOR TRUSTWORTHY. The actor is not a column the application fills in. Every
- * administrative write calls `public.log_admin_action()`, a SECURITY DEFINER function that reads
- * the actor from the VERIFIED JWT and refuses any caller that is not an admin. If the
- * application passed an actor id, the trail would record whatever it was told, which is worth
- * nothing as evidence. The harness asserts the stamping, and asserts that a non-admin is
- * refused.
+ * The table is append-only by grant - not even the service role holds UPDATE or DELETE on it -
+ * and the existing audit trigger redacts gateway payloads before they reach it. So a row here
+ * cannot be edited after the fact, and cannot contain a customer's raw payment payload.
  *
- * An entry with no actor is expected for a scheduled job or a server-side process, which acts
- * without a user session. That is a real gap in attribution and is labelled rather than hidden.
+ * `before` and `after` are shown collapsed. They are JSON, they can be long, and the common
+ * question ("who changed this and when") is answered without expanding anything.
  */
 export default async function AdminAuditPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const query = await searchParams;
-  const pageRaw = Number.parseInt(
-    typeof query.page === "string" ? query.page : "1",
-    10,
-  );
-  const page = Number.isFinite(pageRaw) && pageRaw > 0 ? Math.min(pageRaw, 400) : 1;
+  const params = await searchParams;
+  const rawPage = Array.isArray(params.page) ? params.page[0] : params.page;
+  const parsed = Number.parseInt(rawPage ?? "1", 10);
+  const page = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 500) : 1;
 
   const { supabase } = await requireAdmin("/admin/audit");
 
   const from = (page - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE;
-
   const { data, error } = await supabase
     .from("audit_log")
-    .select("id, actor_user_id, actor_role, action, entity_table, entity_id, created_at")
+    .select("id, actor_user_id, actor_role, action, entity_table, entity_id, before, after, correlation_id, created_at")
     .order("created_at", { ascending: false })
-    .range(from, to);
+    .range(from, from + PAGE_SIZE);
 
-  if (error) throw new Error(`Audit log read failed: ${error.message}`);
+  if (error) throw new Error(`Audit log query failed: ${error.message}`);
 
   const rows = data ?? [];
   const hasMore = rows.length > PAGE_SIZE;
@@ -59,22 +52,13 @@ export default async function AdminAuditPage({
       <PageHeader
         label="Governance"
         title="Audit log"
-        description="Every administrative change, with the actor taken from the verified session token rather than from anything the caller supplied."
+        description="Every administrative write, with the actor taken from the verified session token rather than from the request. Append-only: no role, including the service role, can update or delete a row."
       />
-
-      <div className="rounded-[var(--radius-card)] border border-line bg-panel px-4 py-3">
-        <p className="text-xs text-muted">
-          <strong className="text-ink">This trail cannot be edited or deleted</strong>, by anyone -
-          including the service role. It is written by a database function that stamps the actor
-          from the JWT and refuses non-admins. Detail columns (before/after state) are recorded but
-          not rendered here; the log is for accountability, not for browsing customer data.
-        </p>
-      </div>
 
       {pageRows.length === 0 ? (
         <EmptyState
-          title="No administrative actions recorded yet"
-          hint="The log fills as soon as a setting is changed, a product is saved, a provider is configured or an account is moderated. A completely fresh project legitimately has an empty trail."
+          title="No administrative actions recorded"
+          hint="This is the expected state before anyone has changed anything through the admin area. Rows appear as soon as the first product, setting, provider or account is modified."
         />
       ) : (
         <>
@@ -82,10 +66,10 @@ export default async function AdminAuditPage({
             <thead>
               <tr>
                 <Th>When</Th>
+                <Th>Actor</Th>
                 <Th>Action</Th>
                 <Th>Entity</Th>
-                <Th>Actor</Th>
-                <Th>Role</Th>
+                <Th>Change</Th>
               </tr>
             </thead>
             <tbody>
@@ -93,31 +77,48 @@ export default async function AdminAuditPage({
                 <tr key={row.id as number}>
                   <Td mono>{formatDateTime(row.created_at as string)}</Td>
                   <Td>
-                    <span className="font-mono text-xs text-ink">{row.action as string}</span>
+                    <span className="block font-mono text-[10px] text-ink">
+                      {(row.actor_user_id as string) ?? "service role"}
+                    </span>
+                    <span className="block font-mono text-[10px] text-dim">
+                      {(row.actor_role as string) ?? "-"}
+                    </span>
                   </Td>
                   <Td>
-                    <span className="block font-mono text-xs text-muted">
-                      {row.entity_table as string}
-                    </span>
+                    <span className="font-mono text-xs text-accent">{row.action as string}</span>
+                  </Td>
+                  <Td>
+                    <span className="block text-xs text-ink">{row.entity_table as string}</span>
                     {row.entity_id && (
                       <span className="block font-mono text-[10px] text-dim">
-                        {row.entity_id as string}
+                        {String(row.entity_id).slice(0, 40)}
                       </span>
                     )}
                   </Td>
-                  <Td mono>
-                    {row.actor_user_id ? (
-                      (row.actor_user_id as string)
-                    ) : (
-                      // Not hidden: an action attributed to nobody is exactly the entry a reviewer
-                      // needs to notice, so it is called out rather than left blank.
-                      <span className="text-accent">unattributed (server job)</span>
-                    )}
-                  </Td>
                   <Td>
-                    <span className="font-mono text-[10px] text-dim">
-                      {(row.actor_role as string) ?? "-"}
-                    </span>
+                    {row.before === null && row.after === null ? (
+                      <span className="text-xs text-dim">no payload</span>
+                    ) : (
+                      <details className="max-w-md">
+                        <summary className="cursor-pointer text-xs text-muted">
+                          {row.before !== null && row.after !== null
+                            ? "before and after"
+                            : row.after !== null
+                              ? "after"
+                              : "before"}
+                        </summary>
+                        {row.before !== null && (
+                          <pre className="mt-1 overflow-x-auto text-[10px] leading-relaxed text-dim">
+                            before {JSON.stringify(row.before)}
+                          </pre>
+                        )}
+                        {row.after !== null && (
+                          <pre className="mt-1 overflow-x-auto text-[10px] leading-relaxed text-dim">
+                            after {JSON.stringify(row.after)}
+                          </pre>
+                        )}
+                      </details>
+                    )}
                   </Td>
                 </tr>
               ))}
