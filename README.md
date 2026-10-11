@@ -78,6 +78,42 @@ disagree, the dashboard is wrong: fix it by writing a new migration, not by edit
 the live schema by hand. Every table exposed to the API has RLS enabled and explicit
 policies — never rely on a disabled or permissive default.
 
+## Supplier adapters
+
+Every supplier sits behind one interface (`lib/providers/types.ts`), so a provider can be
+added or swapped without touching checkout, pricing or the database. `resolveAdapter()` in
+`lib/providers/index.ts` is the single place that decides whether a call is real.
+
+**Switching a supplier live — the whole switch:**
+
+1. `PROVIDER_MODE=live`
+2. `ESIM_PROVIDER_BASE_URL` and `ESIM_PROVIDER_API_KEY`
+
+Until both are set, mode stays `sandbox` and nothing leaves the process.
+
+**Sandbox output is visibly marked.** Every sandbox result carries `isSandbox: true`, and
+the deliverable itself is stamped `NUVORA-SANDBOX-NOT-A-REAL-ESIM`. If a sandbox code ever
+reached a customer it would be obvious at a glance, rather than a plausible-looking code
+that fails silently later. The sandbox invents no products: it derives every response from
+a hash of the request, so it is deterministic and there is no seeded fixture anywhere.
+
+**Fail-closed in production.** On a Vercel production deployment the sandbox adapter
+throws instead of returning simulated deliveries, so a live store cannot quietly sell goods
+it never delivers. Set `PROVIDER_ALLOW_SANDBOX_IN_PRODUCTION=true` only for a deliberate
+demo. The guard keys off `VERCEL_ENV`, so it does not cover a non-Vercel production host.
+
+**Fulfilment must be idempotent.** Every fulfilment carries an idempotency key (the order
+line id) because a network call can fail *after* the supplier has already acted. An adapter
+treats a repeat of the same key as the same request, and `getStatus()` returns null for an
+unknown key — which is what makes a retry after a timeout safe rather than a double
+delivery that costs real money.
+
+**Honest scope of the live adapter.** No eSIM supplier has been chosen yet, so
+`esim-live.ts` is written against a documented, configurable contract with the mapping
+isolated in one place. The transport around it — hard timeout, bounded retry with backoff,
+no retry on auth failure, typed errors — is production-grade; the field mapping is the part
+expected to change once a supplier is picked. Do not assume it matches a specific vendor.
+
 ## Environment variables
 
 Every variable is documented as a placeholder in [`.env.example`](.env.example).
@@ -94,7 +130,12 @@ Every variable is documented as a placeholder in [`.env.example`](.env.example).
 | `FLUTTERWAVE_SECRET_KEY` | **server only** | Server API calls |
 | `FLUTTERWAVE_WEBHOOK_SECRET_HASH` | **server only** | Verifies webhook authenticity |
 | `PROVIDER_MODE` | server | `sandbox` \| `live` — the single switch for supplier traffic |
+| `ESIM_PROVIDER_BASE_URL` | **server only** | Supplier API base URL. Must be https. |
 | `ESIM_PROVIDER_API_KEY` | **server only** | Supplier credential |
+| `ESIM_PROVIDER_AUTH_HEADER` | **server only** | Optional extra auth header name |
+| `PROVIDER_SANDBOX_OUTCOME` | server | `completed` \| `pending` \| `failed` — test control, ignored when live |
+| `PROVIDER_SANDBOX_UNIT_COST_MINOR` | server | Simulated sandbox cost; not a catalogue price |
+| `PROVIDER_ALLOW_SANDBOX_IN_PRODUCTION` | server | `true` only for a deliberate demo on a production deployment |
 | `RESEND_API_KEY` | **server only** | Transactional email |
 
 Set production values in **Vercel → Settings → Environment Variables**, and for
