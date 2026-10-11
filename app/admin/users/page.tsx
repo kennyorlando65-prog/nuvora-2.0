@@ -131,7 +131,7 @@ export default async function AdminUsersPage({
               {page > 1 && (
                 <Link
                   href={`/admin/users?page=${page - 1}`}
-                  className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
+                  className="nuvora-btn nuvora-btn-secondary px-3 py-1.5"
                 >
                   Previous
                 </Link>
@@ -139,7 +139,7 @@ export default async function AdminUsersPage({
               {result.hasMore && (
                 <Link
                   href={`/admin/users?page=${page + 1}`}
-                  className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
+                  className="nuvora-btn nuvora-btn-secondary px-3 py-1.5"
                 >
                   Next
                 </Link>

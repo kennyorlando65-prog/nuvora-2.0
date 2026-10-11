@@ -27,8 +27,7 @@ export const metadata: Metadata = { title: "Settings" };
  * somebody can flip from a browser.
  */
 
-const FIELD =
-  "rounded-md border border-line bg-panel-2 px-3 py-2 text-sm text-ink placeholder:text-dim focus:border-accent focus:outline-none";
+const FIELD = "nuvora-input";
 
 const TYPE_LABELS: Record<string, string> = {
   string: "Text",
@@ -138,7 +137,7 @@ export default async function AdminSettingsPage({
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="submit"
-              className="rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+              className="nuvora-btn nuvora-btn-primary"
             >
               Save settings
             </button>

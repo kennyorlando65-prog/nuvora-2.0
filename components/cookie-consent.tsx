@@ -63,7 +63,7 @@ export function CookieConsent() {
         <button
           type="button"
           onClick={() => record("all")}
-          className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+          className="nuvora-btn nuvora-btn-primary"
         >
           Accept all
         </button>
