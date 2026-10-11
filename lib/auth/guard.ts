@@ -38,9 +38,14 @@ export async function getSessionUser(): Promise<SessionContext> {
  * Require an admin, or send the caller somewhere honest.
  *
  * Two distinct outcomes on purpose. An unauthenticated visitor is sent to sign in and comes
- * back to where they were going. A signed-in NON-admin is sent to /admin/forbidden, which
- * explains the refusal - sending them to the sign-in page would be a redirect loop, since
- * they are already signed in and signing in again changes nothing.
+ * back to where they were going. A signed-in NON-admin is sent to the storefront home, NOT
+ * to a "/admin/forbidden" page - each reason is a real bug that was avoided:
+ *
+ *   - A /admin/forbidden route does not exist in this codebase.
+ *   - If it did, it would live under /admin and be guarded by the same check doing the
+ *     redirecting, which is an infinite loop.
+ *   - The admin layout already renders a full, styled refusal for a signed-in non-admin,
+ *     so this branch is the belt to that braces. Sending them home is always safe.
  */
 export async function requireAdmin(nextPath = "/admin"): Promise<{
   supabase: SessionContext["supabase"];
@@ -53,7 +58,7 @@ export async function requireAdmin(nextPath = "/admin"): Promise<{
   }
 
   if (!isAdminUser(user)) {
-    redirect("/admin/forbidden");
+    redirect("/");
   }
 
   return { supabase, user };
@@ -82,4 +87,49 @@ export async function gateAdminApi(): Promise<AdminGateResult> {
   }
 
   return { ok: true, supabase, user };
+}
+
+/**
+ * The service-role client, for an admin reading columns no client role may select.
+ *
+ * WHY THIS EXISTS AT ALL, because "use the service role in the admin area" is exactly the
+ * kind of sentence that hides a hole.
+ *
+ * Column grants in Postgres are per ROLE, not per row. The migration grants
+ * `authenticated` an explicit allow-list on orders, order_items and payments, and that list
+ * deliberately OMITS the commercially sensitive and staff-only columns: `internal_note`,
+ * `engine_version`, `created_ip_hash`, `unit_price_minor`, `unit_cost_minor`,
+ * `supplier_reference`, `raw_payload`, and the whole cost side of products. The admin RLS
+ * policy grants an admin ROWS, but it cannot grant them COLUMNS - RLS has no say in column
+ * privileges. So an admin session, correctly authenticated, simply cannot select
+ * `internal_note` through PostgREST. That is the intended design: it means a stolen admin
+ * session still cannot read the cost or margin columns over the public API, and it is why
+ * the admin surface needs the service role for exactly those fields.
+ *
+ * THE PRECONDITION IS THE WHOLE SAFETY ARGUMENT. This function calls `requireAdmin` FIRST
+ * and only then builds the privileged client, so the service role can never be reached
+ * without a verified admin session. It returns the two clients together on purpose: the
+ * caller is handed the user-scoped client for ordinary reads and the privileged one for the
+ * hidden columns, side by side, which makes "which client am I using, and why" a visible
+ * decision at every call site rather than an invisible default.
+ *
+ * RULES FOR CALLERS
+ *   - Never use the privileged client for a write. Writes go through the user-scoped client
+ *     so that RLS, the schema constraints and the audit trigger all still apply.
+ *   - Never pass a privileged value into a client component or into any JSON response that
+ *     reaches a customer. Cost and margin are server-rendered, or not shown at all.
+ *   - Never use it to bypass a guard. If a page has not called requireAdmin, it does not
+ *     have this function available to it.
+ */
+export async function requireAdminColumns(nextPath = "/admin"): Promise<{
+  /** User-scoped: subject to RLS, the right client for every write and every normal read. */
+  supabase: SessionContext["supabase"];
+  /** Service-role: bypasses RLS. Read-only, hidden columns only. */
+  privileged: import("@supabase/supabase-js").SupabaseClient;
+  user: User;
+}> {
+  const { supabase, user } = await requireAdmin(nextPath);
+  const { getServiceRoleClient } = await import("@/lib/supabase/server");
+
+  return { supabase, privileged: getServiceRoleClient(), user };
 }
