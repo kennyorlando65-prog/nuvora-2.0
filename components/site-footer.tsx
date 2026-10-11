@@ -1,3 +1,7 @@
+import Link from "next/link";
+
+import { legalDocuments, sitePages } from "@/lib/site";
+
 export function SiteFooter() {
   return (
     <footer className="border-t border-line bg-panel-2">
@@ -11,25 +15,39 @@ export function SiteFooter() {
             </p>
           </div>
 
-          <nav aria-label="Legal" className="grid gap-2 text-xs">
-            {[
-              "Terms & Conditions",
-              "Privacy Policy",
-              "Refund & Cancellation",
-              "Acceptable Use",
-              "Cookie Policy",
-            ].map((label) => (
-              <span key={label} className="text-muted">
-                {label}
-                <span className="ml-2 font-mono text-[10px] text-dim">pending</span>
-              </span>
+          <nav aria-label="Site" className="grid gap-2 text-xs">
+            <p className="nuvora-label">Company</p>
+            {sitePages.map((page) => (
+              <Link
+                key={page.href}
+                href={page.href}
+                className="text-muted transition-colors hover:text-accent"
+              >
+                {page.label}
+              </Link>
             ))}
+          </nav>
+
+          <nav aria-label="Legal" className="grid gap-2 text-xs">
+            <p className="nuvora-label">Legal</p>
+            {legalDocuments
+              .filter((document) => document.href !== "/legal")
+              .map((document) => (
+                <Link
+                  key={document.href}
+                  href={document.href}
+                  className="text-muted transition-colors hover:text-accent"
+                >
+                  {document.label}
+                </Link>
+              ))}
           </nav>
         </div>
 
-        <p className="mt-8 border-t border-line-soft pt-5 font-mono text-[11px] text-dim">
-          Legal pages are placeholders. Every policy must be reviewed by a qualified
-          Nigerian lawyer, with an EU/UK adviser for GDPR, before launch.
+        <p className="mt-8 border-t border-line-soft pt-5 text-xs leading-relaxed text-dim">
+          Every legal document on this site is a working draft. Each must be reviewed by a
+          qualified Nigerian lawyer, and by an EU or UK adviser for GDPR, before launch. It
+          is not legal advice and it is not final.
         </p>
       </div>
     </footer>

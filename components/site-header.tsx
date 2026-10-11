@@ -1,12 +1,15 @@
 import Link from "next/link";
 
-const nav = [
-  { href: "/#catalogue", label: "Store" },
-  { href: "/#principles", label: "How we operate" },
-  { href: "/api/health", label: "Status" },
-];
+import { supportEmail } from "@/lib/site";
 
 export function SiteHeader() {
+  const nav = [
+    { href: "/#catalogue", label: "Store" },
+    { href: "/about", label: "About" },
+    { href: "/status", label: "Status" },
+    { href: "/contact", label: "Support" },
+  ];
+
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-bg/85 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3.5">
@@ -27,6 +30,12 @@ export function SiteHeader() {
               {item.label}
             </Link>
           ))}
+          <a
+            href={`mailto:${supportEmail}`}
+            className="hidden rounded-md px-2.5 py-2 text-sm text-muted transition-colors hover:text-ink sm:inline-block"
+          >
+            Email us
+          </a>
         </nav>
       </div>
     </header>

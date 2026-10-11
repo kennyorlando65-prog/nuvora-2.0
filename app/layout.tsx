@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
+import { CookieConsent } from "@/components/cookie-consent";
+import { analyticsEnabled } from "@/lib/consent";
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
@@ -23,6 +25,11 @@ export const viewport: Viewport = {
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  // The banner is rendered only when a non-essential cookie is actually in use. While the
+  // site sets nothing but the sign-in session cookie, asking for consent would be asking
+  // about something that is not happening - see lib/consent.ts.
+  const showConsent = analyticsEnabled();
+
   return (
     <html lang="en">
       <body className="min-h-dvh flex flex-col antialiased">
@@ -37,6 +44,7 @@ export default function RootLayout({
           {children}
         </main>
         <SiteFooter />
+        {showConsent ? <CookieConsent /> : null}
       </body>
     </html>
   );

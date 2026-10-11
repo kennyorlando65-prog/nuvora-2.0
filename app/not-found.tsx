@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { supportEmail } from "@/lib/site";
+
 export default function NotFound() {
   return (
     <section className="mx-auto flex max-w-2xl flex-col items-start px-5 py-24">
@@ -18,7 +20,7 @@ export default function NotFound() {
           Back to the store
         </Link>
         <a
-          href="mailto:support@example.com"
+          href={`mailto:${supportEmail}`}
           className="rounded-lg border border-line px-5 py-3 text-sm font-semibold text-ink transition-colors hover:border-accent hover:text-accent"
         >
           Contact support
