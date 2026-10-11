@@ -2,29 +2,73 @@
 
 /* ---------------------------------------------------------------------------
    NUVORA design tokens.
-   Palette carried over from the established NUVORA visual language.
+
+   THE PALETTE IS CHOSEN AND FROZEN HERE. "Teal on Midnight" was selected by the
+   founder from the style-picker page, and this block is the single place it is
+   defined. Every colour in the product comes from a token below - there is no
+   hardcoded hex anywhere in app/ or components/, so changing the palette is an
+   edit to this file and lib/design/tokens.ts, and nothing else.
+
+   CONTRAST IS MEASURED, NOT EYEBALLED. Every text-on-background pair below was
+   computed with the WCAG relative-luminance formula. The figures in the comments
+   are the real ratios. Two of them are the reason this palette is shaped the way
+   it is:
+
+     - The accent button label is DARK (#0E1116), not white. White on #2FB3A8
+       measures 2.58:1 and fails AA outright. Dark on the same teal measures
+       7.33:1. This was caught on the style-picker page and is carried through
+       here rather than rediscovered in production.
+     - `dim` is #7A8C8A rather than a darker grey, because the obvious choice
+       failed against the card surface. It measures 5.35:1 on the page and
+       4.90:1 on a card, so it clears AA on both.
+
    Tailwind v4 reads these and generates utilities (bg-panel, text-muted, ...).
    --------------------------------------------------------------------------- */
 @theme {
-  --color-bg: #0b0f14;
-  --color-panel: #121820;
-  --color-panel-2: #0f151d;
-  --color-line: #212b36;
-  --color-line-soft: #1a222c;
-  --color-ink: #e6edf3;
-  --color-muted: #8b98a5;
-  --color-dim: #5f6b78;
-  --color-accent: #f0b429;
-  --color-ok: #3fb950;
-  --color-bad: #f85149;
-  --color-info: #58a6ff;
+  /* Surfaces */
+  --color-bg: #0e1116; /* page background */
+  --color-panel: #161b22; /* card / surface */
+  --color-panel-2: #12171d; /* recessed surface, table headers, inputs */
+  --color-panel-3: #1b2229; /* raised surface, hover on a card */
+
+  /* Lines. `line` is decorative; `input` is a real UI boundary and is held to the
+     3:1 non-text threshold (4.65:1 on a card, 5.09:1 on the page). */
+  --color-line: #24393a;
+  --color-line-soft: #1b2a2b;
+  --color-input: #6e8a87;
+
+  /* Text. ink 15.66:1 on bg, muted 8.37:1, dim 5.35:1 - all AA for body text. */
+  --color-ink: #f0e9dc; /* warm sand, deliberately not pure white */
+  --color-muted: #9fb0ae;
+  --color-dim: #7a8c8a;
+
+  /* Accent. accentInk is the label colour that goes ON the accent. */
+  --color-accent: #2fb3a8;
+  --color-accent-hover: #4acfc3;
+  --color-accent-ink: #0e1116; /* 7.33:1 on accent, 9.91:1 on accent-hover */
+  --color-accent-soft: #12312f; /* teal-tinted surface for selected/active states */
+
+  /* Status. Each clears AA on both bg and panel. */
+  --color-ok: #4fbf7a;
+  --color-warn: #d9a441;
+  --color-bad: #f0736a;
+  --color-info: #6fb3e0;
 
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
     Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", monospace;
 
+  /* Radii. A small scale rather than one value, so a pill, a button and a card
+     are visibly different shapes instead of three sizes of the same blob. */
   --radius-card: 14px;
+  --radius-control: 10px;
+  --radius-pill: 999px;
+
+  /* Shadows. Soft and low-contrast: on a dark surface a heavy shadow reads as a
+     smudge, so these lift a card by a few percent rather than casting a shape. */
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --shadow-raised: 0 2px 4px rgb(0 0 0 / 0.45), 0 16px 40px -16px rgb(0 0 0 / 0.7);
 }
 
 @layer base {
@@ -60,16 +104,35 @@
 
   ::selection {
     background: var(--color-accent);
-    color: #0b0f14;
+    color: var(--color-accent-ink);
+  }
+
+  /* A dark UI needs its form controls to opt into the dark rendering, or the
+     browser paints a white dropdown and a white autofill background. */
+  input,
+  select,
+  textarea {
+    color-scheme: dark;
   }
 }
 
 @layer components {
+  /* -- surfaces ------------------------------------------------------------ */
+
   .nuvora-card {
     background: var(--color-panel);
     border: 1px solid var(--color-line);
     border-radius: var(--radius-card);
+    box-shadow: var(--shadow-card);
   }
+
+  .nuvora-card-flat {
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-card);
+  }
+
+  /* -- type ---------------------------------------------------------------- */
 
   .nuvora-label {
     font-family: var(--font-mono);
@@ -77,6 +140,132 @@
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--color-dim);
+  }
+
+  /* The wordmark. There is no logo file and none is invented: NUVORA is set as
+     the plain word in clean type, with the tracking opened up slightly so it
+     reads as a mark rather than as a word in a sentence. */
+  .nuvora-wordmark {
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--color-ink);
+  }
+
+  /* -- controls ------------------------------------------------------------ */
+
+  .nuvora-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: var(--radius-control);
+    padding: 0.625rem 1.125rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.25rem;
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease;
+    cursor: pointer;
+  }
+
+  /* Dark label on the teal. See the contrast note at the top of this file. */
+  .nuvora-btn-primary {
+    background: var(--color-accent);
+    color: var(--color-accent-ink);
+  }
+
+  .nuvora-btn-primary:hover {
+    background: var(--color-accent-hover);
+  }
+
+  .nuvora-btn-secondary {
+    background: transparent;
+    border: 1px solid var(--color-line);
+    color: var(--color-ink);
+  }
+
+  .nuvora-btn-secondary:hover {
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+  }
+
+  .nuvora-btn-ghost {
+    background: transparent;
+    color: var(--color-muted);
+  }
+
+  .nuvora-btn-ghost:hover {
+    color: var(--color-ink);
+  }
+
+  .nuvora-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .nuvora-input {
+    width: 100%;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-input);
+    background: var(--color-panel-2);
+    padding: 0.625rem 0.75rem;
+    font-size: 0.875rem;
+    color: var(--color-ink);
+  }
+
+  .nuvora-input::placeholder {
+    color: var(--color-dim);
+  }
+
+  .nuvora-input:focus {
+    border-color: var(--color-accent);
+    outline: none;
+  }
+
+  /* -- navigation ---------------------------------------------------------- */
+
+  .nuvora-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    border-radius: var(--radius-control);
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    color: var(--color-muted);
+    transition:
+      background-color 120ms ease,
+      color 120ms ease;
+  }
+
+  .nuvora-nav-item:hover {
+    background: var(--color-panel-3);
+    color: var(--color-ink);
+  }
+
+  /* The teal-tinted surface for the active state, as specified in the palette. */
+  .nuvora-nav-item-active {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    font-weight: 500;
+  }
+
+  /* -- status pills -------------------------------------------------------- */
+
+  .nuvora-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    white-space: nowrap;
+    border-radius: var(--radius-pill);
+    border: 1px solid;
+    padding: 0.125rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 }
 
