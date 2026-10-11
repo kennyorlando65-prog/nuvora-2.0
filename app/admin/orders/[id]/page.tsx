@@ -34,6 +34,7 @@ import {
   PAYMENT_PUBLIC_COLUMNS,
   getOrderHiddenDetail,
 } from "@/lib/admin/orders";
+import { retryFulfilmentAction } from "@/lib/admin/order-actions";
 import { requireAdminColumns } from "@/lib/auth/guard";
 
 export const metadata: Metadata = { title: "Order detail" };
@@ -58,10 +59,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  */
 export default async function AdminOrderDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  const query = await searchParams;
+
+  // The retry action reports back through the URL, so its outcome survives the redirect and is
+  // visible on reload. Wording is built in the action, where the outcome is known.
+  const notice = typeof query.notice === "string" ? query.notice : undefined;
+  const retryFailure = query.error === "failed";
 
   // Validated before use. A malformed id would otherwise reach PostgREST and return a
   // database-level cast error, which is both noisier and less honest than a 404.
@@ -104,6 +113,34 @@ export default async function AdminOrderDetailPage({
     itemRows.map((i) => i.id as string),
     paymentRows.map((p) => p.id as string),
   );
+
+  // Fulfilment attempts, through the privileged client: the table is service-role only by grant,
+  // because is_sandbox and the supplier's raw error text are internal rather than customer-facing.
+  //
+  // A failure here does NOT fail the page. This is telemetry about deliveries; the order, its
+  // lines and its payments above have already rendered, and refusing the whole page because an
+  // observability table is unreadable would hide the order from the person investigating it.
+  const itemIds = itemRows.map((i) => i.id as string);
+  let attempts: Record<string, unknown>[] = [];
+
+  if (itemIds.length > 0) {
+    const { data: attemptData, error: attemptError } = await privileged
+      .from("fulfilment_attempts")
+      .select(
+        "id, order_item_id, attempt_number, provider_key, provider_mode, is_sandbox, outcome, " +
+          "error_code, retryable, latency_ms, detail, created_at",
+      )
+      .in("order_item_id", itemIds)
+      .order("created_at", { ascending: false });
+
+    if (attemptError) {
+      console.error(
+        `[admin] could not read fulfilment attempts for order ${id}: ${attemptError.message}`,
+      );
+    } else {
+      attempts = (attemptData ?? []) as unknown as Record<string, unknown>[];
+    }
+  }
 
   const currency = order.currency as string;
   const totalMinor = Number(order.total_minor);
@@ -148,6 +185,13 @@ export default async function AdminOrderDetailPage({
           </div>
         }
       />
+
+      {notice && (
+        <Notice tone={retryFailure ? "bad" : "ok"}>
+          <strong className="text-ink">Fulfilment: </strong>
+          {notice}
+        </Notice>
+      )}
 
       {!hidden.available && (
         <Notice tone="warn">
@@ -401,12 +445,122 @@ export default async function AdminOrderDetailPage({
         )}
       </Card>
 
-      <p className="text-xs text-dim">
-        Fulfilment retry, refunds and manual status changes are not built yet. They are the
-        next stage, together with the supplier webhook receiver - see the{" "}
-        <InlineLink href="/admin/providers">providers</InlineLink> page for what a supplier
-        still requires before any of it can run for real.
-      </p>
+      <Card
+        title="Fulfilment"
+        description="Retry a delivery, and see what has already been attempted against each line. Every attempt is recorded, including the ones that failed."
+      >
+        <form action={retryFulfilmentAction} className="flex flex-wrap items-center gap-3">
+          <input type="hidden" name="orderId" value={id} />
+          <button
+            type="submit"
+            className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+          >
+            Retry fulfilment now
+          </button>
+          <span className="text-xs text-dim">
+            Runs the same path the payment webhook runs, so it cannot deliver something the
+            automatic path could not. Safe to press twice: a line already delivered is skipped, and
+            a retry after a timeout asks the supplier for the existing delivery first rather than
+            requesting a second one. The action is recorded in the audit log under your account.
+          </span>
+        </form>
+
+        {attempts.length === 0 ? (
+          <p className="text-sm text-dim">
+            No supplier call has been made for this order. If it is paid and paid some time ago,
+            check <InlineLink href="/admin/providers">the providers page</InlineLink>: a provider
+            that is disabled or missing a base URL or API key cannot be called at all, and that
+            failure is recorded above as its own attempt.
+          </p>
+        ) : (
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>When</Th>
+                <Th>Attempt</Th>
+                <Th>Provider</Th>
+                <Th>Outcome</Th>
+                <Th>Retryable</Th>
+                <Th>Detail</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {attempts.map((attempt) => (
+                <tr key={attempt.id as number}>
+                  <Td mono>{formatDateTime(attempt.created_at as string)}</Td>
+                  <Td mono>#{attempt.attempt_number as number}</Td>
+                  <Td>
+                    <span className="block font-mono text-[10px] text-ink">
+                      {attempt.provider_key as string}
+                    </span>
+                    <span className="block font-mono text-[10px] text-dim">
+                      {attempt.provider_mode as string}
+                      {attempt.is_sandbox ? " - simulated" : ""}
+                    </span>
+                  </Td>
+                  <Td>
+                    <Badge
+                      label={attempt.outcome as string}
+                      tone={
+                        attempt.outcome === "completed"
+                          ? "ok"
+                          : attempt.outcome === "pending"
+                            ? "warn"
+                            : "bad"
+                      }
+                    />
+                    {typeof attempt.error_code === "string" && (
+                      <span className="mt-1 block font-mono text-[10px] text-dim">
+                        {attempt.error_code}
+                      </span>
+                    )}
+                  </Td>
+                  <Td mono>
+                    {attempt.retryable === null
+                      ? "-"
+                      : attempt.retryable
+                        ? "yes"
+                        : "no"}
+                  </Td>
+                  <Td>
+                    <span className="block text-xs text-muted">
+                      {String(attempt.detail ?? "").slice(0, 240)}
+                    </span>
+                    {typeof attempt.latency_ms === "number" && (
+                      <span className="block font-mono text-[10px] text-dim">
+                        {attempt.latency_ms}ms
+                      </span>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        )}
+      </Card>
+
+      <Card title="What still needs building around fulfilment">
+        <ul className="flex list-disc flex-col gap-1.5 pl-5 text-sm text-muted">
+          <li>
+            <strong className="text-ink">Refunds and manual status changes.</strong> Not built. A
+            delivery that repeatedly fails has a retry path and an audit trail, but the decision to
+            refund - and moving an order to 
+            <code className="font-mono text-xs">refunded</code> - is still a database operation.
+          </li>
+          <li>
+            <strong className="text-ink">The automatic retry sweep.</strong> Transient failures are
+            recorded as retryable and can be retried here or by the next gateway redelivery, but
+            nothing currently walks the queue on its own. Until that exists, a stuck line is found by
+            looking at the dashboard&rsquo;s undelivered count rather than being retried for you.
+          </li>
+          <li>
+            <strong className="text-ink">Supplier callbacks.</strong> The receiver exists at 
+            <code className="font-mono text-xs">/api/webhooks/supplier/&lt;provider&gt;</code>, but a
+            supplier only sends anything once its callback URL and signing secret are configured on
+            the provider page.
+          </li>
+        </ul>
+      </Card>
     </>
   );
 }
