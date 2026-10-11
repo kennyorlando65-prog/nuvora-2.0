@@ -67,10 +67,35 @@ if [ ! -d "supabase/migrations" ]; then
 fi
 
 # --- 1. cluster + database ----------------------------------------------------
-if [ ! -f "$LOCK" ]; then
-  say "starting cluster..."
-  pg_ctlcluster "$PGVER" main start >/dev/null 2>&1 || { say "cluster start failed"; exit 1; }
-  touch "$LOCK"
+# Bring the cluster up only if it is not already online.
+#
+# This used to read `pg_ctlcluster start || { say "cluster start failed"; exit 1; }`
+# guarded by a lock file. `pg_ctlcluster start` exits non-zero when the cluster is
+# ALREADY RUNNING, so any second run in the same environment - a fresh shell, or a
+# container where the cluster survived the timeout - aborted with "cluster start
+# failed" against a perfectly healthy database. A guard that fails when the thing it
+# guards is already done is worse than no guard, so the outcome is now asserted
+# rather than the command's exit code.
+cluster_status() {
+  pg_lsclusters -h "$PGVER" main 2>/dev/null | awk '{print $4}'
+}
+
+if [ "$(cluster_status)" != "online" ]; then
+  # A cluster that reports `down` while a stale postmaster.pid survives refuses to
+  # start, which is exactly the state a container restart leaves behind.
+  rm -f "/var/lib/postgresql/${PGVER}/main/postmaster.pid" 2>/dev/null || true
+  say "starting cluster $PGVER/main..."
+  pg_ctlcluster "$PGVER" main start >/dev/null 2>&1 || true
+fi
+touch "$LOCK"
+
+if [ "$(cluster_status)" != "online" ]; then
+  say "ERROR: cluster $PGVER/main is not online."
+  say "--- pg_lsclusters ---"
+  pg_lsclusters 2>/dev/null || true
+  say "--- tail of /var/log/postgresql/postgresql-${PGVER}-main.log ---"
+  tail -20 "/var/log/postgresql/postgresql-${PGVER}-main.log" 2>/dev/null || true
+  exit 1
 fi
 
 su postgres -c "dropdb --if-exists $DB" >/dev/null 2>&1

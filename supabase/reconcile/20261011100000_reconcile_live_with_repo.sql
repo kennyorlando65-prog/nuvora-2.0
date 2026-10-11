@@ -61,8 +61,13 @@
 --   2. Archive anything with rows, before dropping anything.
 --   3. Drop the legacy objects in dependency order (children first, so no CASCADE is
 --      needed and nothing is dropped that this file did not name).
---   4. Record the eight repository migrations in the live history so that a later
---      `supabase db push` recognises work already done and does not re-apply it.
+--   4. Report which repository migrations the live history knows about, so the applying
+--      session can see the handover rather than assume it. This file deliberately does NOT
+--      write history rows: the migration endpoint records each migration as it applies it,
+--      and pre-recording them here would leave the history claiming work that a later
+--      failure could prevent - a false record, which is the exact failure this exercise
+--      exists to remove. If the apply step fails partway, the answer is to fix forward on
+--      the object that failed, never to edit the history to match.
 --
 -- ROLLBACK: there is none, and that is deliberate. Re-creating the wallet schema would
 -- restore a design NUVORA has decided against, and every row in it was empty or archived
@@ -162,40 +167,43 @@ drop type if exists public.wallet_transaction_type;
 drop type if exists public.user_role;
 
 -- -----------------------------------------------------------------------------
--- 4. Record the repository migrations in the live history.
+-- 4. Report which repository migrations the live history knows about. READ-ONLY.
 --
---    SUPABASE_APPLY_A_MIGRATION writes this table itself, so it is normally not touched by
---    hand. It is written here because the eight migrations are about to be applied to this
---    project by the platform's migration endpoint, and leaving the history showing only
---    the two August entries would make the applied work invisible - the exact drift this
---    whole exercise exists to remove. From the moment this row set exists, the repository
---    and the history agree.
+--    This block used to INSERT the eight versions into schema_migrations. That was wrong,
+--    and worth recording why: the migration endpoint records each migration as it applies
+--    it, so writing the rows first would leave the history asserting work that had not
+--    happened yet. If any migration then failed, the history would claim the schema was
+--    up to date while the database was not - which is precisely the drift this exercise
+--    exists to eliminate, would have been created by the fix for it, and would be the
+--    hardest kind to notice later.
 --
---    `idempotency_key` is set so a repeated run cannot duplicate a version, and the insert
---    is guarded on `version` as well, because the column set of this table is Supabase's
---    to change and a bare insert would be the fragile part.
+--    What the history SHOULD show after a successful run is: the two 2026-08-14 legacy
+--    entries (left in place - they are a true record of what happened, and deleting them
+--    would falsify the past) followed by the nine repository versions. This block prints
+--    what is actually there so that claim can be checked rather than assumed.
 -- -----------------------------------------------------------------------------
 do $$
 declare
-  v_migrations constant text[][] := array[
-    ['20261011090000', 'init_extensions_helpers'],
-    ['20261011090100', 'enums'],
-    ['20261011090200', 'catalogue'],
-    ['20261011090300', 'orders'],
-    ['20261011090400', 'payments'],
-    ['20261011090500', 'audit_log'],
-    ['20261011090600', 'rls_and_grants'],
-    ['20261011090700', 'clarify_base_price'],
-    ['20261011090800', 'fix_webhook_processed_check']
+  v_repo   text[] := array[
+    '20261011090000','20261011090100','20261011090200','20261011090300',
+    '20261011090400','20261011090500','20261011090600','20261011090700',
+    '20261011090800'
   ];
-  i integer;
+  v_present integer;
+  v_legacy  text;
 begin
-  for i in 1 .. array_length(v_migrations, 1) loop
-    insert into supabase_migrations.schema_migrations (version, name)
-    values (v_migrations[i][1], v_migrations[i][2])
-    on conflict (version) do update set name = excluded.name;
-  end loop;
-  raise notice 'recorded % repository migration(s) in the live history', array_length(v_migrations, 1);
+  select count(*) into v_present
+  from supabase_migrations.schema_migrations
+  where version = any (v_repo);
+
+  select coalesce(string_agg(version || ' (' || coalesce(name, 'unnamed') || ')', ', '
+                             order by version), '(none)')
+    into v_legacy
+  from supabase_migrations.schema_migrations
+  where version <> all (v_repo);
+
+  raise notice 'repository migrations already recorded: % of %', v_present, array_length(v_repo, 1);
+  raise notice 'legacy history entries retained: %', v_legacy;
 end $$;
 
 -- -----------------------------------------------------------------------------
