@@ -80,7 +80,7 @@ async function runCount(table: string, query: PromiseLike<CountResponse>): Promi
 /**
  * The select options for a count-only request, declared once.
  *
- * `as const` rather than a type annotation: it keeps the literal types (`"exact"`, `true`)
+ * `satisfies` rather than a type annotation: it keeps the literal types (`"exact"`, `true`)
  * that the Supabase overloads discriminate on, while still being checked. Annotating it
  * would widen `count` to `string` and silently select a different overload.
  */

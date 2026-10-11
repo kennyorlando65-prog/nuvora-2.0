@@ -42,6 +42,21 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // Never let a build silently succeed with a type error.
   typescript: { ignoreBuildErrors: false },
+  experimental: {
+    // Cap static-generation parallelism instead of letting Next spawn one worker per CPU.
+    //
+    // This is not a micro-optimisation, it is what makes the build complete in a
+    // memory-capped container. Next reads the HOST's CPU count, not the container's memory
+    // limit: this sandbox advertises 48 CPUs while its cgroup allows 2 GB, so the build
+    // launched dozens of parallel workers into a 2 GB budget and the kernel OOM-killed the
+    // process mid-way through "Generating static pages". The failure looked like a code
+    // fault and was purely a resource mismatch.
+    //
+    // Two workers is enough that the build stays quick and low enough that peak memory
+    // stays inside a capped runner. Vercel's build containers are memory-capped in the same
+    // way, so this is the correct setting for them too rather than a sandbox workaround.
+    cpus: 2,
+  },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

@@ -58,7 +58,7 @@ export function OrderFilters({ filters }: { filters: OrderFilters }) {
           <select name="fulfilment" defaultValue={filters.fulfilment} className={FIELD}>
             <option value="">Any fulfilment state</option>
             {FULFILMENT_OPTIONS.map(([value, label]) => (
-              <option key={value} value={label}>
+              <option key={value} value={value}>
                 {label}
               </option>
             ))}

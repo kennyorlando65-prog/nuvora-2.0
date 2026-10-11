@@ -80,7 +80,7 @@ export async function signInAction(formData: FormData): Promise<void> {
     redirect(backTo("invalid"));
   }
 
-  // Purge the cache so the admin shell renders with the new session rather than a
+  // purge the cache so the admin shell renders with the new session rather than a
   // previously cached anonymous shell.
   revalidatePath("/", "layout");
   redirect(next);
