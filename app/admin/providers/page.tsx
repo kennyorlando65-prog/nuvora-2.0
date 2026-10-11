@@ -47,7 +47,7 @@ export default async function AdminProvidersPage({
         actions={
           <Link
             href="/admin/providers/new"
-            className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+            className="nuvora-btn nuvora-btn-primary"
           >
             Add provider
           </Link>
@@ -99,7 +99,7 @@ export default async function AdminProvidersPage({
                     />
                     <Link
                       href={`/admin/providers/${provider.key}`}
-                      className="rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-muted transition-colors hover:border-accent hover:text-ink"
+                      className="nuvora-btn nuvora-btn-secondary px-3 py-1.5"
                     >
                       Configure
                     </Link>

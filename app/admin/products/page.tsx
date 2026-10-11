@@ -53,7 +53,7 @@ export default async function AdminProductsPage() {
         actions={
           <Link
             href="/admin/products/new"
-            className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-bg transition-opacity hover:opacity-90"
+            className="nuvora-btn nuvora-btn-primary"
           >
             Add product
           </Link>
@@ -185,8 +185,8 @@ export default async function AdminProductsPage() {
 
           <p className="text-xs text-dim">
             Need to change how prices are computed across products? Margin rules live in{" "}
-            <InlineLink href="/admin/settings">settings</InlineLink>. Until they do, every
-            product is priced from its own base price, with no rule applied.
+            <InlineLink href="/admin/settings">settings</InlineLink> once that stage lands. Until
+            then every product is priced from its own base price, with no rule applied.
           </p>
         </>
       )}
