@@ -29,6 +29,15 @@ import { isAdminUser } from "@/lib/auth/roles";
  * place.
  */
 
+/**
+ * The signed-in app's route prefixes.
+ *
+ * Listed explicitly rather than derived, because middleware runs on the edge with no access
+ * to the route manifest. A prefix missing from here is still protected by the app layout's
+ * own `requireUser` check - this list is the outer layer, not the only one.
+ */
+const APP_PATHS = ["/dashboard", "/store", "/checkout", "/orders"];
+
 /** Minimal styled refusal, kept inline so middleware stays dependency-free. */
 function forbiddenResponse(): NextResponse {
   const body = `<!doctype html>
@@ -41,15 +50,15 @@ function forbiddenResponse(): NextResponse {
 <style>
   :root { color-scheme: dark; }
   body { margin:0; min-height:100vh; display:grid; place-items:center;
-    background:#0b0f14; color:#e6edf3;
+    background:#0e1116; color:#f0e9dc;
     font:16px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
   .card { max-width:32rem; margin:2rem; padding:2rem;
-    background:#121820; border:1px solid #212b36; border-radius:14px; }
+    background:#161b22; border:1px solid #24393a; border-radius:14px; }
   .label { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.6875rem;
-    letter-spacing:.14em; text-transform:uppercase; color:#5f6b78; }
+    letter-spacing:.14em; text-transform:uppercase; color:#7a8c8a; }
   h1 { margin:.5rem 0 .75rem; font-size:1.5rem; letter-spacing:-.02em; }
-  p { margin:0 0 .75rem; color:#8b98a5; }
-  a { color:#f0b429; }
+  p { margin:0 0 .75rem; color:#9fb0ae; }
+  a { color:#2fb3a8; }
 </style>
 </head>
 <body>
@@ -60,7 +69,7 @@ function forbiddenResponse(): NextResponse {
        will not change that - the privilege has to be granted to your account by an existing
        administrator.</p>
     <p>If you believe this is a mistake, contact support and quote your account email.</p>
-    <p><a href="/">Return to the store</a></p>
+    <p><a href="/dashboard">Return to your dashboard</a></p>
   </main>
 </body>
 </html>`;
@@ -113,6 +122,9 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
   const isAdminPath = pathname === "/admin" || pathname.startsWith("/admin/");
+  const isAppPath = APP_PATHS.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 
   if (isAdminPath && !user) {
     const url = request.nextUrl.clone();
@@ -128,10 +140,23 @@ export async function middleware(request: NextRequest) {
     return forbiddenResponse();
   }
 
-  // An already-signed-in operator has no use for the sign-in form.
+  // The signed-in app. Any authenticated user may enter - this is the CUSTOMER gate, and
+  // it deliberately does not look at roles, because a customer has no role and requiring
+  // one would lock every customer out. The admin check above is unaffected by this branch.
+  if (isAppPath && !user) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/auth/sign-in";
+    url.search = "";
+    url.searchParams.set("next", pathname);
+    return NextResponse.redirect(url);
+  }
+
+  // An already-signed-in visitor has no use for the sign-in form. They are sent to the
+  // customer dashboard rather than the admin area, because most people signing in are
+  // customers - and because sending everyone to /admin would advertise that it exists.
   if (pathname === "/auth/sign-in" && user) {
     const url = request.nextUrl.clone();
-    url.pathname = "/admin";
+    url.pathname = "/dashboard";
     url.search = "";
     return NextResponse.redirect(url);
   }
@@ -144,5 +169,15 @@ export const config = {
   // pointlessly and add latency to static files that need no session. The matcher is also
   // what keeps /auth/callback out of the "already signed in" redirect, because the OAuth
   // callback must stay reachable while a session is being established.
-  matcher: ["/admin", "/admin/:path*", "/auth/sign-in"],
+  matcher: [
+    "/admin",
+    "/admin/:path*",
+    "/dashboard",
+    "/store",
+    "/store/:path*",
+    "/checkout",
+    "/orders",
+    "/orders/:path*",
+    "/auth/sign-in",
+  ],
 };

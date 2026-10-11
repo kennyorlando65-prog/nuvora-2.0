@@ -22,7 +22,7 @@ rather than by inspecting grants.
 `has_column_privilege()` and `has_table_privilege()` prove the GRANT layer. They say nothing
 about which ROWS a policy returns. A table can be perfectly granted and still leak every row if
 its policy is wrong, and a policy can be perfectly written and permit nothing if the grant is
-missing - both mistakes have already occurred in this project and both were caught by running
+missing — both mistakes have already occurred in this project and both were caught by running
 the harness rather than by reading the SQL.
 
 So these assertions do this instead:
@@ -58,19 +58,19 @@ rollback;
 | `authenticated` CAN read `suppliers.credential_hint` | The masked indicator cannot render |
 
 Both directions are asserted deliberately. A security check that only ever asserts "denied"
-passes on a completely broken deployment in which nobody can do anything - which is why every
+passes on a completely broken deployment in which nobody can do anything — which is why every
 "cannot" above is paired with a "can" that would break if the check were vacuous.
 
 ## The two layers, and why both are needed
 
-**Layer 1 - column grants.** `anon` and `authenticated` cannot read `products.supplier_cost_minor`,
+**Layer 1 — column grants.** `anon` and `authenticated` cannot read `products.supplier_cost_minor`,
 `product_prices.margin_minor`, `order_items.unit_cost_minor` or `payments.raw_payload`. This is
 per-role, not per-row, so RLS cannot express it: a policy grants rows, and PostgREST still refuses
 the columns. That is why the admin order and product pages read cost and margin through
 `requireAdminColumns()`, which runs the gate and then returns a service-role reader.
 
-**Layer 2 - RLS policies.** Written in the same migration that creates each table. Twelve tables
-now. `is_admin()` reads `app_metadata.nuvora_role` from the verified JWT - deliberately
+**Layer 2 — RLS policies.** Written in the same migration that creates each table. Twelve tables
+now. `is_admin()` reads `app_metadata.nuvora_role` from the verified JWT — deliberately
 `app_metadata` rather than `user_metadata`, because a user can write their own `user_metadata`,
 which would make every admin policy self-service.
 
@@ -93,6 +93,6 @@ which would make every admin policy self-service.
 2. Place an order with the admin account, or insert one and set its `user_id`.
 3. Sign in as the non-admin account and request the admin's order id with that session's token.
 4. Expect **no rows**, not a 403: RLS filters rather than raises on reads. A 403 would mean the
-   request failed earlier, at a grant - also a refusal, but a different one.
+   request failed earlier, at a grant — also a refusal, but a different one.
 5. Repeat against `/admin/orders/<id>` in a browser. Expect a redirect to `/auth/sign-in`, since
    the middleware refuses before the query runs.
