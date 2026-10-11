@@ -146,7 +146,7 @@ export async function createOrder(input: CheckoutInput): Promise<CheckoutResult>
   // -- existing order? ---------------------------------------------------------
   const existing = await client
     .from("orders")
-    .select("id, order_number, currency, total_minor, engine_version, status")
+    .select("id, order_number, public_token, currency, total_minor, engine_version, status")
     .eq("idempotency_key", idempotencyKey)
     .maybeSingle();
 
@@ -213,7 +213,7 @@ export async function createOrder(input: CheckoutInput): Promise<CheckoutResult>
       engine_version: priced.engineVersion || ENGINE_VERSION,
       created_ip_hash: hashIp(input.clientIp, process.env.IP_HASH_SALT),
     })
-    .select("id, order_number")
+    .select("id, order_number, public_token")
     .single();
 
   if (orderInsert.error) {
@@ -224,6 +224,10 @@ export async function createOrder(input: CheckoutInput): Promise<CheckoutResult>
 
   const orderId = String(orderInsert.data.id);
   const orderNumber = String(orderInsert.data.order_number);
+  // The key the confirmation URL carries. Deliberately NOT the order number: that comes
+  // from a sequence, so consecutive values are guessable and a URL built from one would let
+  // anybody walk the day's orders. This is a 128-bit per-order secret the database minted.
+  const publicToken = String(orderInsert.data.public_token);
 
   const itemsInsert = await client.from("order_items").insert(
     priced.lines.map((line) => ({
@@ -271,7 +275,7 @@ export async function createOrder(input: CheckoutInput): Promise<CheckoutResult>
     email,
     amountMinor: priced.subtotalMinor,
     currency: priced.currency,
-    callbackUrl: `${siteUrl}/orders/${encodeURIComponent(orderNumber)}`,
+    callbackUrl: `${siteUrl}/orders/${encodeURIComponent(publicToken)}`,
     metadata: { order_number: orderNumber, engine_version: priced.engineVersion },
   });
 
