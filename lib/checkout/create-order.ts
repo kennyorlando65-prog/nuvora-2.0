@@ -30,11 +30,37 @@ import type { PaymentGateway } from "@/lib/payments/types";
 
 export type CheckoutInput = {
   lines: { productId: string; quantity: number; clientUnitPriceMinor?: unknown }[];
+  /**
+   * The delivery address the browser offered.
+   *
+   * This is REQUEST data, not a fact. It is never the source of truth: `createOrder`
+   * compares it against `authenticatedEmail` below and refuses the order if they disagree.
+   */
   email: string;
   /** Client-generated. Makes a double-submitted checkout safe to retry. */
   idempotencyKey: string;
   billingCountry?: string;
   clientIp?: string;
+  /**
+   * THE OWNER, from the verified session - never from the request body.
+   *
+   * REQUIRED, not optional, and that is the point. `orders.user_id` existed in the schema
+   * from the first migration but nothing ever populated it: every order was written with
+   * user_id NULL and "owned" only by whatever email address the browser happened to post.
+   * The RLS policies that grant a customer their own orders read `user_id = current_user_id()`,
+   * so in practice no customer could read any order through the API - only through the
+   * service-role path. Making this parameter non-optional means a future call site that
+   * forgets the session cannot compile, rather than silently writing an ownerless order.
+   */
+  userId: string;
+  /**
+   * The address on the verified account.
+   *
+   * Kept as its own field, separate from the order's `email`, so the comparison below is
+   * against a server-derived value. Comparing the delivery address to itself - which is what
+   * validating `input.email` in the route would amount to - would prove nothing.
+   */
+  authenticatedEmail: string;
 };
 
 export type CheckoutResult = {
@@ -59,6 +85,51 @@ function assertEmail(email: unknown): string {
     throw new PricingError("invalid_email", "a valid email address is required for delivery");
   }
   return email.trim().toLowerCase();
+}
+
+/** A uuid check, so a caller cannot pass a role name or an empty string as the owner. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function assertUserId(userId: unknown): string {
+  if (typeof userId !== "string" || !UUID_RE.test(userId)) {
+    throw new PricingError(
+      "unauthenticated",
+      "an order must belong to a signed-in account",
+    );
+  }
+  return userId;
+}
+
+/**
+ * The delivery address: the account's own confirmed address, and nothing else.
+ *
+ * WHY THE ADDRESS IS PINNED TO THE ACCOUNT RATHER THAN FREE TEXT.
+ *
+ * An order is fulfilled by mailing codes and a receipt to an address. If that address is
+ * whatever the browser posted, then the email confirmation the project requires everywhere
+ * else proves nothing about the one address that actually matters: an account holder could
+ * order to any address in the world, and NUVORA would be delivering paid goods to a mailbox
+ * nobody has verified. Pinning the delivery address to the confirmed account address means
+ * "we can reach you" is true for the address we deliver to, by construction rather than by
+ * assertion.
+ *
+ * This deliberately does NOT yet support ordering a code for somebody else. That is a real
+ * product need - gifting, and the planned Business module - but it is a decision about
+ * acceptable risk rather than a line of code, so it is left undone and flagged rather than
+ * quietly allowed.
+ */
+function resolveDeliveryEmail(input: CheckoutInput): string {
+  const account = assertEmail(input.authenticatedEmail);
+  const requested = assertEmail(input.email);
+
+  if (requested !== account) {
+    throw new PricingError(
+      "delivery_email_mismatch",
+      "the delivery address must be the confirmed address on your account",
+    );
+  }
+
+  return account;
 }
 
 function assertIdempotencyKey(value: unknown): string {
@@ -139,14 +210,17 @@ async function loadRules(): Promise<PricingRule[]> {
  * we return the existing row before pricing) and it means no cached figure can be replayed.
  */
 export async function createOrder(input: CheckoutInput): Promise<CheckoutResult> {
-  const email = assertEmail(input.email);
+  const email = resolveDeliveryEmail(input);
+  const userId = assertUserId(input.userId);
   const idempotencyKey = assertIdempotencyKey(input.idempotencyKey);
   const client = getServiceRoleClient();
 
   // -- existing order? ---------------------------------------------------------
   const existing = await client
     .from("orders")
-    .select("id, order_number, public_token, currency, total_minor, engine_version, status")
+    .select(
+      "id, order_number, public_token, currency, total_minor, engine_version, status, user_id, email",
+    )
     .eq("idempotency_key", idempotencyKey)
     .maybeSingle();
 
@@ -155,6 +229,41 @@ export async function createOrder(input: CheckoutInput): Promise<CheckoutResult>
   }
 
   if (existing.data) {
+    /**
+     * CLAIM AN OWNERLESS ORDER, under three conditions at once.
+     *
+     * Every order written before the owner column was populated has `user_id` NULL, and
+     * `orders_select_own` reads `user_id = current_user_id()` - so those orders are
+     * invisible to the very customers who placed them. Without this, the founder's own
+     * test orders would stay unreachable and the fix would look broken.
+     *
+     * All three conditions are required, and each one closes a way this could be abused:
+     *
+     *   user_id is null          - an order that already has an owner is NEVER reassigned.
+     *                              Two accounts cannot fight over one order, and a stale
+     *                              retry from a different account cannot steal one. The
+     *                              update repeats this guard in its own WHERE clause, so
+     *                              even a race between two claimants leaves one owner.
+     *   the stored email matches - the claim is only possible on an order that was already
+     *                              addressed to THIS account's confirmed address, so the
+     *                              person claiming it is the person it was delivered to.
+     *   a valid session          - enforced by the caller, which refuses unauthenticated
+     *                              requests before this function is reached.
+     *
+     * The email comparison is against `email` - derived from the verified session above -
+     * and not against anything from the request body.
+     */
+    const storedUserId = existing.data.user_id as string | null;
+    const storedEmail = String(existing.data.email ?? "").toLowerCase();
+
+    if (storedUserId === null && storedEmail === email) {
+      await client
+        .from("orders")
+        .update({ user_id: userId })
+        .eq("id", String(existing.data.id))
+        .is("user_id", null);
+    }
+
     const payment = await client
       .from("payments")
       .select("provider_reference, authorization_url")
@@ -202,6 +311,9 @@ export async function createOrder(input: CheckoutInput): Promise<CheckoutResult>
   const orderInsert = await client
     .from("orders")
     .insert({
+      // The owner, from the verified session. This is the column every customer-facing RLS
+      // policy depends on, and the one that was previously left NULL on every order.
+      user_id: userId,
       email,
       billing_country: input.billingCountry ?? null,
       currency: priced.currency,

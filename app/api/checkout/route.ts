@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { createOrder } from "@/lib/checkout/create-order";
+import { getSessionUser } from "@/lib/auth/guard";
 import { PaymentError } from "@/lib/payments/errors";
 import { PricingError } from "@/lib/pricing";
 import { clientKeyFrom, rateLimit } from "@/lib/ratelimit";
@@ -11,6 +12,11 @@ import { clientKeyFrom, rateLimit } from "@/lib/ratelimit";
  * POST a basket of product ids and quantities. The response is an order number and a URL
  * to send the customer to. Prices are NEVER accepted from the client: the request has no
  * price field that is read, and a volunteered price is treated only as a tampering signal.
+ *
+ * A CONFIRMED ACCOUNT IS REQUIRED, and this is enforced here rather than left to the page.
+ * It used to be enforced nowhere: the /checkout PAGE required a session, but this route did
+ * not, so an anonymous caller could POST a basket with any email address and have a real,
+ * payable order created against it. The page was a suggestion; this is the boundary.
  *
  * Runs on the Node runtime because it uses node:crypto and BigInt money arithmetic.
  */
@@ -106,6 +112,64 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const input = body as Record<string, unknown>;
 
+  /**
+   * -- THE GATE: A SIGNED-IN ACCOUNT WITH A CONFIRMED ADDRESS --
+   *
+   * Order of the checks, and why each is where it is:
+   *
+   *   1. The session comes from `getUser()`, which validates the access token against the
+   *      auth server. Reading the cookie directly would accept a forged one.
+   *   2. Confirmation is read from the verified user record, so it cannot be asserted by
+   *      the caller. This is the part that has to be real: an order is delivered by email,
+   *      so an unconfirmed address is an address we may not be able to reach, and taking
+   *      someone's money for goods we cannot deliver is the worst failure this product has.
+   *   3. Only then is the order created, with the owner taken from the session.
+   *
+   * The refusal is a real HTTP status, not a redirect to a sign-in form. A redirect would
+   * hand a fetch() caller a login page with a 200 and look like success to anything that only
+   * checks the status code - which is how a broken gate passes its own test.
+   */
+  const { user } = await getSessionUser();
+
+  if (!user) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "unauthenticated",
+          message: "Sign in before placing an order.",
+        },
+      },
+      { status: 401, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  const accountEmail = user.email ?? "";
+
+  if (!accountEmail) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "no_account_email",
+          message: "This account has no email address, so an order cannot be delivered.",
+        },
+      },
+      { status: 403, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  if (!user.email_confirmed_at) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "email_unconfirmed",
+          message:
+            "Confirm your email address before placing an order. Your codes and receipt are delivered to that address, so we cannot take payment until it is confirmed.",
+        },
+      },
+      { status: 403, headers: { "cache-control": "no-store" } },
+    );
+  }
+
   try {
     const result = await createOrder({
       lines: Array.isArray(input.lines)
@@ -126,6 +190,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           })
         : [],
       email: String(input.email ?? ""),
+      // Taken from the verified session, never from the request body. createOrder also
+      // requires the delivery address to match this, so a forged `email` is refused rather
+      // than silently honoured.
+      userId: user.id,
+      authenticatedEmail: accountEmail,
       idempotencyKey: String(input.idempotencyKey ?? ""),
       ...(typeof input.billingCountry === "string"
         ? { billingCountry: input.billingCountry.toUpperCase() }
