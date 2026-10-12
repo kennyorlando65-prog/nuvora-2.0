@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import { AdminNav } from "@/components/admin/admin-nav";
+import { SignalMotif } from "@/components/brand/signal-motif";
+import { Wordmark } from "@/components/brand/wordmark";
 import { signOutAction } from "@/lib/auth/actions";
 import { displayIdentity, roleOf, type RoleBearingUser } from "@/lib/auth/roles";
 
@@ -32,14 +34,12 @@ export function AdminShell({
   const role = roleOf(user) ?? "no role";
 
   return (
-    <div className="min-h-dvh bg-bg p-0 lg:p-4">
+    <div className="nuvora-surface-admin min-h-dvh p-0 lg:p-4">
       <div className="mx-auto flex min-h-dvh max-w-[100rem] flex-col overflow-hidden border-line bg-panel-2 lg:min-h-[calc(100dvh-2rem)] lg:flex-row lg:rounded-[var(--radius-card)] lg:border lg:shadow-[var(--shadow-raised)]">
         {/* -- sidebar (desktop) ------------------------------------------- */}
         <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-panel lg:flex">
           <div className="flex flex-col gap-1 border-b border-line px-5 py-4">
-            <Link href="/admin" aria-label="NUVORA operations">
-              <span className="nuvora-wordmark text-sm">NUVORA</span>
-            </Link>
+            <Wordmark href="/admin" label="NUVORA operations" size="md" rule />
             <span className="nuvora-label">Operations</span>
           </div>
 
@@ -76,12 +76,25 @@ export function AdminShell({
 
         {/* -- main column -------------------------------------------------- */}
         <div className="flex min-w-0 flex-1 flex-col">
+          {/* The operator band. Fixed to the top of every admin screen, above the header, so
+              an operator can never be part-way through a change without the surface being
+              unmistakable. The customer app has no equivalent, because a customer has no
+              second surface to confuse this one with. */}
+          <div className="nuvora-operator-band flex items-center justify-between gap-3 px-4 py-1.5 lg:px-6">
+            <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-accent">
+              Operator console - not customer visible
+            </span>
+            <span className="hidden font-mono text-[10px] uppercase tracking-[0.16em] text-accent sm:inline">
+              All changes audited
+            </span>
+          </div>
+
           {/* -- top bar ---------------------------------------------------- */}
           <header className="flex flex-col gap-3 border-b border-line bg-panel px-4 py-3 lg:px-6">
             <div className="flex items-center justify-between gap-4">
               <div className="flex flex-col gap-0.5 lg:hidden">
                 <Link href="/admin" aria-label="NUVORA operations">
-                  <span className="nuvora-wordmark text-sm">NUVORA</span>
+                  <Wordmark size="sm" rule />
                 </Link>
                 <span className="nuvora-label">Operations</span>
               </div>
@@ -129,6 +142,9 @@ export function AdminShell({
           </main>
 
           <footer className="border-t border-line px-4 py-4 lg:px-6">
+            <div className="mb-3 overflow-hidden opacity-60">
+              <SignalMotif variant="rule" />
+            </div>
             <p className="text-xs text-dim">
               Every administrative change is written to the audit log with the actor taken from
               the verified session token.{" "}

@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { SignalMotif } from "@/components/brand/signal-motif";
+import { Wordmark } from "@/components/brand/wordmark";
 import { supportEmail } from "@/lib/site";
 
 /**
@@ -11,23 +13,40 @@ import { supportEmail } from "@/lib/site";
  * store lives behind the sign-in, where an empty catalogue is an honest empty state
  * rather than a broken shopfront.
  *
- * The wordmark is the plain word NUVORA. There is no logo file and none is invented.
+ * THE HEADER IS BUILT TO CARRY THE BRAND. The complaint was that the logo presence was weak
+ * next to the rest of the layout. So the mark is now large, has the accent hairline under it,
+ * and sits in a taller header band - the word is the loudest thing in the bar rather than
+ * something squeezed in at the left. The mark links home, which is the one navigation
+ * behaviour a header wordmark is expected to have.
+ *
+ * The mark itself is the plain word NUVORA in clean type. There is no logo file and none is
+ * invented; see components/brand/wordmark.tsx.
  */
 export function MarketingSiteHeader() {
   const nav = [
     { href: "/#what", label: "What we sell" },
+    { href: "/#why", label: "Why NUVORA" },
     { href: "/#how", label: "How it works" },
-    { href: "/#trust", label: "How we operate" },
     { href: "/about", label: "About" },
     { href: "/contact", label: "Support" },
   ];
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-bg/85 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3.5">
-        <Link href="/" className="flex items-baseline gap-2" aria-label="NUVORA home">
-          <span className="nuvora-wordmark text-base">NUVORA</span>
-        </Link>
+    <header className="nuvora-surface-marketing sticky top-0 z-40 border-b border-line bg-bg/85 backdrop-blur">
+      {/* The signal rule runs along the very top of the header: the motif's first appearance,
+          where it is always visible and never in the way of content. */}
+      <div className="overflow-hidden border-b border-line-soft">
+        <SignalMotif variant="rule" />
+      </div>
+
+      <div className="mx-auto flex max-w-6xl items-center justify-between gap-6 px-5 py-4">
+        <Wordmark
+          href="/"
+          label="NUVORA home"
+          size="md"
+          rule
+          className="shrink-0 py-0.5"
+        />
 
         <nav aria-label="Primary" className="hidden items-center gap-1 lg:flex">
           {nav.map((item) => (
@@ -59,14 +78,22 @@ export function MarketingSiteHeader() {
  *
  * Carries the legal review notice, because the honest status of those documents is
  * something a visitor should be able to see without opening one.
+ *
+ * It also repeats the motif at the foot of the page, which closes the brand's frame: the
+ * signal appears at the top and bottom of every public page, so a visitor always knows they
+ * are inside NUVORA even when they have scrolled a long way past the header.
  */
 export function MarketingSiteFooter() {
   return (
-    <footer className="border-t border-line bg-panel-2">
+    <footer className="nuvora-surface-marketing border-t border-line">
+      <div className="overflow-hidden border-b border-line-soft">
+        <SignalMotif variant="rule" />
+      </div>
+
       <div className="mx-auto max-w-6xl px-5 py-10">
         <div className="flex flex-wrap items-start justify-between gap-8">
           <div className="max-w-sm">
-            <p className="nuvora-wordmark text-sm">NUVORA</p>
+            <Wordmark size="sm" rule />
             <p className="mt-3 text-xs leading-relaxed text-muted">
               A white-label digital services platform. Orders are paid for individually at
               checkout - NUVORA holds no balances and collects no identity documents.

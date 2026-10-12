@@ -25,6 +25,7 @@ const LINKS = [
   { href: "/admin/products", label: "Catalogue" },
   { href: "/admin/users", label: "Users" },
   { href: "/admin/providers", label: "Providers" },
+  { href: "/admin/diagnostics", label: "Diagnostics" },
   { href: "/admin/settings", label: "Settings" },
   { href: "/admin/audit", label: "Audit log" },
 ];

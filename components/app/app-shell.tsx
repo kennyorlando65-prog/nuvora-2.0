@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { User } from "@supabase/supabase-js";
 
 import { AppNav } from "@/components/app/app-nav";
+import { Wordmark } from "@/components/brand/wordmark";
 import { signOutAction } from "@/lib/auth/actions";
 import { displayName, initialOf } from "@/lib/app/session";
 
@@ -29,13 +30,12 @@ export function AppShell({
 }) {
   return (
     <div className="min-h-dvh bg-bg p-0 lg:p-4">
-      <div className="mx-auto flex min-h-dvh max-w-[100rem] flex-col overflow-hidden border-line bg-panel-2 lg:min-h-[calc(100dvh-2rem)] lg:flex-row lg:rounded-[var(--radius-card)] lg:border lg:shadow-[var(--shadow-raised)]">
+      <div className="nuvora-surface-app mx-auto flex min-h-dvh max-w-[100rem] flex-col overflow-hidden border-line bg-panel-2 lg:min-h-[calc(100dvh-2rem)] lg:flex-row lg:rounded-[var(--radius-card)] lg:border lg:shadow-[var(--shadow-raised)]">
         {/* -- sidebar (desktop) ------------------------------------------- */}
         <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-panel lg:flex">
-          <div className="flex items-center gap-2 border-b border-line px-5 py-4">
-            <Link href="/dashboard" aria-label="NUVORA dashboard">
-              <span className="nuvora-wordmark text-sm">NUVORA</span>
-            </Link>
+          <div className="flex flex-col gap-2 border-b border-line px-5 py-4">
+            <Wordmark href="/dashboard" label="NUVORA dashboard" size="md" rule />
+            <span className="nuvora-label">Account</span>
           </div>
 
           <div className="flex-1 px-3 py-4">
@@ -70,7 +70,7 @@ export function AppShell({
           <header className="flex flex-col gap-3 border-b border-line bg-panel px-4 py-3 lg:px-6">
             <div className="flex items-center justify-between gap-4">
               <Link href="/dashboard" className="lg:hidden" aria-label="NUVORA dashboard">
-                <span className="nuvora-wordmark text-sm">NUVORA</span>
+                <Wordmark size="sm" rule />
               </Link>
 
               {/* A pill search field, as in the reference layout. It is a real form that
