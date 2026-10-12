@@ -33,3 +33,13 @@ next-env.d.ts
 # supabase local stack
 supabase/.branches
 supabase/.temp
+
+# internal working directories - never part of the product
+# Audit reports, QA screenshots and scratch output live here. None of them is in the
+# repository today; these entries are what keep them out if one is ever created here.
+_ref/
+qa/
+shots/
+tmp/
+downloads/
+webpages/

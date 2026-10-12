@@ -20,6 +20,13 @@ const securityHeaders = [
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
   },
+  // Stops the browser speculatively resolving hostnames found in page content. Nothing in
+  // this app needs it, and it is a small amount of information a visitor did not ask to
+  // leak to their DNS resolver.
+  { key: "X-DNS-Prefetch-Control", value: "off" },
+  // No Flash or PDF cross-domain policy files are served, so nothing should be allowed to
+  // load one from this origin.
+  { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
   {
     key: "Content-Security-Policy",
     value: [
