@@ -5,21 +5,48 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 /**
  * Dashboard aggregates.
  *
- * Counts are obtained with `head: true` + `count: "exact"`, which asks PostgREST for the
- * row count without transferring rows. An admin overview is a summary; pulling every order
- * body to count them would get slower every month and would transfer customer data the page
- * never displays.
+ * WHY EVERY SELECT BELOW NAMES A COLUMN INSTEAD OF USING "*".
+ *
+ * This is the fix for the admin 500, and the reason is worth writing down because the
+ * failure mode is invisible in review.
+ *
+ * `authenticated` holds COLUMN-LEVEL select grants, not a whole-table grant: the migration
+ * revokes table-wide SELECT and re-grants an explicit allow-list per table. That allow-list
+ * deliberately omits the cost, margin and staff-only columns. Postgres refuses a whole-row
+ * read for a role that does not hold a grant on EVERY column, so `select *` fails with
+ *
+ *     ERROR: permission denied for table orders
+ *
+ * which is a confusing message - the role plainly does have permission to *some* of the
+ * table - and it fails even for `head: true` count requests, because PostgREST still builds
+ * the `select=*` projection before executing.
+ *
+ * `count(*)` and `count(<granted column>)` both work, because neither reads an ungranted
+ * column. So every query here projects one column that is definitely in the allow-list.
+ *
+ * The projection differs per table on purpose: `user_moderation` is keyed by `user_id` and
+ * has no `id` column at all, so a blanket `select("id")` would have replaced one 500 with
+ * another. That is checked, not assumed.
+ *
+ * ONE FAILING COUNT MUST NOT TAKE DOWN THE PAGE.
+ * An operator opening the console to triage a problem cannot be locked out by the very
+ * problem they came to look at. Each count is therefore isolated: a failure is recorded
+ * against its own metric, the figure renders as an inline error, and every other figure on
+ * the page still appears. `degraded` and `failures` drive that display.
  *
  * READS USE THE USER-SCOPED CLIENT, NOT THE SERVICE ROLE. That is deliberate: every query
  * here is also subject to the admin RLS policies, so if the privilege were ever lost the
  * dashboard would come back empty rather than quietly serving data. Bypassing RLS here
  * would make this the one surface a guard bug could not be caught by the database.
- *
- * Every column touched below is in the `authenticated` column grant list, which is why no
- * privileged access is needed: the aggregates deliberately do not involve cost, margin or
- * staff-only fields. The pages that need those take the privileged reader from
- * `requireAdminColumns` instead - see the note in lib/auth/guard.ts.
  */
+
+/** One aggregate that could not be read, named so it can be pointed at on screen. */
+export type MetricFailure = {
+  /** Human label for the failing figure, e.g. "orders paid". */
+  metric: string;
+  /** The underlying database message. Shown to an operator, never to a customer. */
+  message: string;
+};
 
 export type Overview = {
   orders: {
@@ -51,6 +78,10 @@ export type Overview = {
   users: {
     blocked: number;
   };
+  /** Empty when every aggregate read succeeded. */
+  failures: MetricFailure[];
+  /** True when at least one aggregate is missing, so the page can say so plainly. */
+  degraded: boolean;
 };
 
 /** The shape PostgREST returns for a head+count request. */
@@ -60,33 +91,49 @@ type CountResponse = {
 };
 
 /**
- * Awaits a count query and turns a failure into a loud error.
- *
- * A count that fails silently is worse than a page that refuses to render: a dashboard
- * showing zero awaiting-fulfilment lines while the query is erroring is how an operator
- * concludes there is no work to do. The table name is carried into the message so the
- * failing query is identifiable without a debugger.
- */
-async function runCount(table: string, query: PromiseLike<CountResponse>): Promise<number> {
-  const { count, error } = await query;
-
-  if (error) {
-    throw new Error(`Overview count failed for "${table}": ${error.message}`);
-  }
-
-  return count ?? 0;
-}
-
-/**
  * The select options for a count-only request, declared once.
  *
- * `satisfies` rather than a type annotation: it keeps the literal types (`"exact"`, `true`)
+ * `as const` rather than a type annotation: it keeps the literal types (`"exact"`, `true`)
  * that the Supabase overloads discriminate on, while still being checked. Annotating it
  * would widen `count` to `string` and silently select a different overload.
  */
 const HEAD_COUNT = { count: "exact", head: true } as const;
 
+/**
+ * Awaits a count query and records a failure instead of throwing.
+ *
+ * The metric name is carried into the message so the failing figure is identifiable on the
+ * page without a debugger, and the caller still gets a number so the surrounding layout does
+ * not have to handle a missing value.
+ */
+async function runCount(
+  metric: string,
+  query: PromiseLike<CountResponse>,
+  failures: MetricFailure[],
+): Promise<number> {
+  try {
+    const { count, error } = await query;
+
+    if (error) {
+      failures.push({ metric, message: error.message });
+      return 0;
+    }
+
+    return count ?? 0;
+  } catch (error) {
+    // A thrown error (a transport failure, a malformed response) is treated exactly like a
+    // returned one: this figure is unavailable, the rest of the page is not.
+    failures.push({
+      metric,
+      message: error instanceof Error ? error.message : "The count could not be completed.",
+    });
+    return 0;
+  }
+}
+
 export async function getOverview(supabase: SupabaseClient): Promise<Overview> {
+  const failures: MetricFailure[] = [];
+
   const [
     ordersTotal,
     awaitingPayment,
@@ -107,79 +154,100 @@ export async function getOverview(supabase: SupabaseClient): Promise<Overview> {
     providersSandbox,
     blockedUsers,
   ] = await Promise.all([
-    runCount("orders", supabase.from("orders").select("*", HEAD_COUNT)),
+    // `id` is in the authenticated allow-list on orders. See the note at the top of the file.
+    runCount("orders", supabase.from("orders").select("id", HEAD_COUNT), failures),
 
     runCount(
-      "orders.pending_payment",
-      supabase.from("orders").select("*", HEAD_COUNT).eq("status", "pending_payment"),
+      "orders awaiting payment",
+      supabase.from("orders").select("id", HEAD_COUNT).eq("status", "pending_payment"),
+      failures,
     ),
     runCount(
-      "orders.paid",
-      supabase.from("orders").select("*", HEAD_COUNT).eq("status", "paid"),
+      "orders paid",
+      supabase.from("orders").select("id", HEAD_COUNT).eq("status", "paid"),
+      failures,
     ),
     runCount(
-      "orders.fulfilling",
-      supabase.from("orders").select("*", HEAD_COUNT).eq("status", "fulfilling"),
+      "orders fulfilling",
+      supabase.from("orders").select("id", HEAD_COUNT).eq("status", "fulfilling"),
+      failures,
     ),
     runCount(
-      "orders.fulfilled",
-      supabase.from("orders").select("*", HEAD_COUNT).eq("status", "fulfilled"),
+      "orders fulfilled",
+      supabase.from("orders").select("id", HEAD_COUNT).eq("status", "fulfilled"),
+      failures,
     ),
     runCount(
-      "orders.failed",
-      supabase.from("orders").select("*", HEAD_COUNT).eq("status", "failed"),
+      "orders failed",
+      supabase.from("orders").select("id", HEAD_COUNT).eq("status", "failed"),
+      failures,
     ),
     runCount(
-      "orders.partially_fulfilled",
-      supabase.from("orders").select("*", HEAD_COUNT).eq("status", "partially_fulfilled"),
+      "orders partially fulfilled",
+      supabase.from("orders").select("id", HEAD_COUNT).eq("status", "partially_fulfilled"),
+      failures,
     ),
 
     // The two queues an operator actually works: goods paid for but not delivered, and
     // deliveries that failed and therefore need either a retry or a refund decision.
     runCount(
-      "order_items.undelivered",
+      "order lines undelivered",
       supabase
         .from("order_items")
-        .select("*", HEAD_COUNT)
+        .select("id", HEAD_COUNT)
         .in("fulfilment_status", ["pending", "submitted"]),
+      failures,
     ),
     runCount(
-      "order_items.failed",
-      supabase.from("order_items").select("*", HEAD_COUNT).eq("fulfilment_status", "failed"),
-    ),
-
-    runCount(
-      "payments.succeeded",
-      supabase.from("payments").select("*", HEAD_COUNT).eq("status", "succeeded"),
-    ),
-    runCount(
-      "payments.failed",
-      supabase.from("payments").select("*", HEAD_COUNT).eq("status", "failed"),
-    ),
-
-    runCount("products", supabase.from("products").select("*", HEAD_COUNT)),
-    runCount(
-      "products.active",
-      supabase.from("products").select("*", HEAD_COUNT).eq("status", "active"),
-    ),
-    runCount(
-      "products.draft",
-      supabase.from("products").select("*", HEAD_COUNT).eq("status", "draft"),
-    ),
-
-    runCount("suppliers", supabase.from("suppliers").select("*", HEAD_COUNT)),
-    runCount(
-      "suppliers.enabled",
-      supabase.from("suppliers").select("*", HEAD_COUNT).eq("is_active", true),
-    ),
-    runCount(
-      "suppliers.sandbox",
-      supabase.from("suppliers").select("*", HEAD_COUNT).eq("mode", "sandbox"),
+      "order lines failed",
+      supabase.from("order_items").select("id", HEAD_COUNT).eq("fulfilment_status", "failed"),
+      failures,
     ),
 
     runCount(
-      "user_moderation.blocked",
-      supabase.from("user_moderation").select("*", HEAD_COUNT).not("status", "eq", "active"),
+      "payments succeeded",
+      supabase.from("payments").select("id", HEAD_COUNT).eq("status", "succeeded"),
+      failures,
+    ),
+    runCount(
+      "payments failed",
+      supabase.from("payments").select("id", HEAD_COUNT).eq("status", "failed"),
+      failures,
+    ),
+
+    runCount("products", supabase.from("products").select("id", HEAD_COUNT), failures),
+    runCount(
+      "products active",
+      supabase.from("products").select("id", HEAD_COUNT).eq("status", "active"),
+      failures,
+    ),
+    runCount(
+      "products draft",
+      supabase.from("products").select("id", HEAD_COUNT).eq("status", "draft"),
+      failures,
+    ),
+
+    runCount("suppliers", supabase.from("suppliers").select("id", HEAD_COUNT), failures),
+    runCount(
+      "suppliers enabled",
+      supabase.from("suppliers").select("id", HEAD_COUNT).eq("is_active", true),
+      failures,
+    ),
+    runCount(
+      "suppliers sandbox",
+      supabase.from("suppliers").select("id", HEAD_COUNT).eq("mode", "sandbox"),
+      failures,
+    ),
+
+    // NOT "id": user_moderation is keyed by user_id and has no id column. Requesting a
+    // column that does not exist is the same class of failure this file exists to fix.
+    runCount(
+      "blocked accounts",
+      supabase
+        .from("user_moderation")
+        .select("user_id", HEAD_COUNT)
+        .not("status", "eq", "active"),
+      failures,
     ),
   ]);
 
@@ -205,5 +273,7 @@ export async function getOverview(supabase: SupabaseClient): Promise<Overview> {
       sandbox: providersSandbox,
     },
     users: { blocked: blockedUsers },
+    failures,
+    degraded: failures.length > 0,
   };
 }

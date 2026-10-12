@@ -596,9 +596,12 @@ async function recordAttempt(
 }
 
 async function countAttempts(privileged: SupabaseClient, orderItemId: string): Promise<number> {
+  // `select("id", ...)` rather than `*`: a starred count is refused for any role holding
+  // column-level grants without every column, so naming a granted column keeps this read
+  // correct for the privileged client AND for a user-scoped one.
   const { count, error } = await privileged
     .from("fulfilment_attempts")
-    .select("*", { count: "exact", head: true })
+    .select("id", { count: "exact", head: true })
     .eq("order_item_id", orderItemId);
 
   if (error) {

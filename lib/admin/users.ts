@@ -101,15 +101,31 @@ export async function listAccounts(
     moderationByUser.set(row.user_id as string, row);
   }
 
-  // Order counts for the same page, again in one query. `head: true` avoids transferring rows.
+  // Order counts for the same page, one query per account.
+  //
+  // `select("id", ...)` rather than `select("*", ...)`: `authenticated` holds column-level
+  // grants on orders and `*` asks for every column including the ungranted cost and staff-only
+  // ones, which Postgres refuses outright - so a starred count here fails for every account
+  // and would take the whole customer list down with it. `id` is in the allow-list.
+  //
+  // PER-ACCOUNT ISOLATION. One account whose count cannot be read must not blank the list, so
+  // a failure is recorded as null ("unknown") for that row only. Null is deliberately distinct
+  // from zero: "we could not count these" and "this customer has never ordered" are different
+  // facts, and showing 0 for a failed count would tell an operator something false.
   const counts = new Map<string, number>();
   await Promise.all(
     ids.map(async (id) => {
-      const { count } = await supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", id);
-      counts.set(id, count ?? 0);
+      try {
+        const { count, error } = await supabase
+          .from("orders")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", id);
+
+        if (error) return;
+        counts.set(id, count ?? 0);
+      } catch {
+        // Left unset, so the row renders "unknown" rather than a misleading zero.
+      }
     }),
   );
 

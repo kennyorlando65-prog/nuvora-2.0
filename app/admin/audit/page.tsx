@@ -37,8 +37,12 @@ export default async function AdminAuditPage({
   const from = (page - 1) * PAGE_SIZE;
   const { data, error } = await supabase
     .from("audit_log")
-    .select("id, actor_user_id, actor_role, action, entity_table, entity_id, before, after, correlation_id, created_at")
-    .order("created_at", { ascending: false })
+    // `occurred_at`, NOT `created_at`. audit_log has no created_at column at all - the
+    // timestamp is named occurred_at - and asking PostgREST for a column that does not exist
+    // is a 500 on this page. The column is named in the migration and the name is deliberate,
+    // so the fix is here rather than in the schema.
+    .select("id, actor_user_id, actor_role, action, entity_table, entity_id, before, after, correlation_id, occurred_at")
+    .order("occurred_at", { ascending: false })
     .range(from, from + PAGE_SIZE);
 
   if (error) throw new Error(`Audit log query failed: ${error.message}`);
@@ -75,7 +79,7 @@ export default async function AdminAuditPage({
             <tbody>
               {pageRows.map((row) => (
                 <tr key={row.id as number}>
-                  <Td mono>{formatDateTime(row.created_at as string)}</Td>
+                  <Td mono>{formatDateTime(row.occurred_at as string)}</Td>
                   <Td>
                     <span className="block font-mono text-[10px] text-ink">
                       {(row.actor_user_id as string) ?? "service role"}

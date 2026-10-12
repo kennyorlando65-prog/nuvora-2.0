@@ -206,9 +206,17 @@ export async function recomputePriceSnapshot(
   if (productError) return { ok: false, reason: `Product read failed: ${productError.message}` };
   if (!product) return { ok: false, reason: "Product not found." };
 
+  // Columns named explicitly rather than `*`. The privileged client CAN read every column,
+  // but naming them keeps this read honest about what the pricing engine consumes and keeps
+  // it working unchanged if the table ever gains a service-role-only column. Every field of
+  // PricingRule is listed, including `is_active`, which the engine requires.
   const { data: rules, error: rulesError } = await privileged
     .from("pricing_rules")
-    .select("*")
+    .select(
+      "id, name, scope, product_line, product_id, margin_type, margin_percentage, " +
+        "margin_fixed_minor, rounding, min_price_minor, max_price_minor, fx_rate, priority, " +
+        "is_active, effective_from, effective_to",
+    )
     .eq("is_active", true);
 
   if (rulesError) return { ok: false, reason: `Pricing rules read failed: ${rulesError.message}` };
