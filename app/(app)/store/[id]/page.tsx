@@ -27,7 +27,7 @@ export default async function ProductPage({
   const { id } = await params;
   if (!UUID.test(id)) notFound();
 
-  const { supabase } = await requireUser(`/store/${id}`);
+  const { supabase, user } = await requireUser(`/store/${id}`);
   const product = await getStoreProduct(supabase, id);
 
   if (!product) notFound();
@@ -117,6 +117,8 @@ export default async function ProductPage({
                 productName={product.name}
                 unitPriceMinor={price}
                 currency={product.currency}
+                accountEmail={user.email ?? ""}
+                emailConfirmed={Boolean(user.email_confirmed_at)}
               />
             </div>
           </Card>

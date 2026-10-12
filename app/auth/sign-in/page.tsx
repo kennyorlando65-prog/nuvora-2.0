@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { PasswordField } from "@/components/auth/password-field";
 import { signInAction, signInWithGoogleAction } from "@/lib/auth/actions";
 import { isSupabaseConfigured } from "@/lib/env.public";
 
@@ -36,7 +37,6 @@ const ERRORS: Record<string, string> = {
 
 const NOTICES: Record<string, string> = {
   "signed-out": "You have been signed out.",
-  "reset-sent": "If that address has an account, a reset link is on its way.",
 };
 
 export default async function SignInPage({
@@ -110,25 +110,21 @@ export default async function SignInPage({
             type="email"
             autoComplete="email"
             required
-            className="nuvora-input"
+            aria-invalid={errorCode === "invalid" || errorCode === "missing" || undefined}
+            className={`nuvora-input ${
+              errorCode === "invalid" || errorCode === "missing" ? "nuvora-input-invalid" : ""
+            }`}
             placeholder="you@example.com"
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="password" className="nuvora-label">
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            minLength={6}
-            className="nuvora-input"
-          />
-        </div>
+        <PasswordField
+          name="password"
+          label="Password"
+          autoComplete="current-password"
+          minLength={8}
+          invalid={errorCode === "invalid" || errorCode === "missing"}
+        />
 
         <button
           type="submit"
@@ -153,8 +149,19 @@ export default async function SignInPage({
         <Link href="/auth/sign-up" className="text-muted underline hover:text-ink">
           Create one
         </Link>
-        . Forgotten your password? Use the recovery flow from your account page, or contact
-        support.
+        .
+      </p>
+
+      <p className="text-xs text-dim">
+        Forgotten your password?{" "}
+        <Link href="/auth/forgot-password" className="text-muted underline hover:text-ink">
+          Reset it here
+        </Link>
+        . Waiting on a confirmation email?{" "}
+        <Link href="/auth/confirm-email" className="text-muted underline hover:text-ink">
+          Send it again
+        </Link>
+        .
       </p>
     </div>
   );
