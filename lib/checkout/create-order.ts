@@ -116,7 +116,7 @@ function assertUserId(userId: unknown): string {
  * This deliberately does NOT yet support ordering a code for somebody else. That is a real
  * product need - gifting, and the planned Business module - but it is a decision about
  * acceptable risk rather than a line of code, so it is left undone and flagged rather than
- * quietly allowed.
+ * quietly allowed. See the note in the handover.
  */
 function resolveDeliveryEmail(input: CheckoutInput): string {
   const account = assertEmail(input.authenticatedEmail);
@@ -241,9 +241,7 @@ export async function createOrder(input: CheckoutInput): Promise<CheckoutResult>
      *
      *   user_id is null          - an order that already has an owner is NEVER reassigned.
      *                              Two accounts cannot fight over one order, and a stale
-     *                              retry from a different account cannot steal one. The
-     *                              update repeats this guard in its own WHERE clause, so
-     *                              even a race between two claimants leaves one owner.
+     *                              retry from a different account cannot steal one.
      *   the stored email matches - the claim is only possible on an order that was already
      *                              addressed to THIS account's confirmed address, so the
      *                              person claiming it is the person it was delivered to.
