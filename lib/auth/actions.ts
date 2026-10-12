@@ -212,7 +212,7 @@ export async function requestPasswordResetAction(formData: FormData): Promise<vo
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
 
   if (!email) {
-    redirect("/auth/sign-in?error=missing");
+    redirect("/auth/forgot-password?error=missing");
   }
 
   const headerList = await headers();
@@ -223,7 +223,7 @@ export async function requestPasswordResetAction(formData: FormData): Promise<vo
   });
 
   if (!limit.allowed) {
-    redirect("/auth/sign-in?error=throttled");
+    redirect("/auth/forgot-password?error=throttled");
   }
 
   const supabase = await getSupabaseServerClient();
@@ -235,5 +235,131 @@ export async function requestPasswordResetAction(formData: FormData): Promise<vo
     redirectTo: `${publicEnv.siteUrl}/auth/callback?next=%2Fauth%2Fupdate-password`,
   });
 
-  redirect("/auth/sign-in?notice=reset-sent");
+  // The confirmation belongs on the page that asked the question, next to the form the
+  // customer just submitted. It used to land on the sign-in page, which is the wrong
+  // context - they had been on the reset form, not on sign-in.
+  redirect("/auth/forgot-password?notice=reset-sent");
+}
+
+/**
+ * Set a new password, from the link the reset email carried.
+ *
+ * THIS ACTION WAS THE MISSING HALF OF A BROKEN LOOP. `requestPasswordResetAction` sent a
+ * link pointing at /auth/update-password, and no such page and no such action existed - the
+ * link resolved to a 404. A customer who forgot their password could request a reset, click
+ * the emailed link, receive a valid session, and then have nowhere to type a new password.
+ *
+ * The session IS the authorisation here. The emailed code was exchanged for one server-side
+ * in /auth/callback before this page rendered, so "there is a user" means "whoever holds
+ * this browser opened the link we mailed". There is no separate token to check, and adding
+ * one would be a second thing to get wrong.
+ */
+const UPDATE_PASSWORD_LIMIT = 8;
+
+export async function updatePasswordAction(formData: FormData): Promise<void> {
+  const password = String(formData.get("password") ?? "");
+  const confirm = String(formData.get("confirm_password") ?? "");
+
+  const backTo = (code: string) => `/auth/update-password?error=${code}`;
+
+  const headerList = await headers();
+  const limit = rateLimit({
+    key: clientKeyFrom(headerList, "auth:update-password"),
+    limit: UPDATE_PASSWORD_LIMIT,
+    windowMs: SIGNIN_WINDOW_MS,
+  });
+
+  if (!limit.allowed) {
+    redirect(backTo("throttled"));
+  }
+
+  // Checked before the session, so a mismatch is reported as a mismatch rather than as an
+  // expired link. The length rule matches the sign-up form; Supabase enforces its own
+  // minimum as well, and this gives the clearer message of the two.
+  if (password.length < 8) {
+    redirect(backTo("weak-password"));
+  }
+
+  if (password !== confirm) {
+    redirect(backTo("mismatch"));
+  }
+
+  const supabase = await getSupabaseServerClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect(backTo("no-session"));
+  }
+
+  const { error } = await supabase.auth.updateUser({ password });
+
+  if (error) {
+    // Supabase refuses a new password identical to the current one. That is not a system
+    // failure and telling the customer "something went wrong" would send them round the
+    // whole loop again for nothing, so it is reported as what it is.
+    const message = error.message.toLowerCase();
+    if (message.includes("different from the old") || message.includes("same password")) {
+      redirect(backTo("same-password"));
+    }
+    redirect(backTo("update-failed"));
+  }
+
+  revalidatePath("/", "layout");
+  redirect("/auth/update-password?notice=updated");
+}
+
+/**
+ * Send the confirmation email again.
+ *
+ * WHY THIS IS NEEDED AT ALL. With confirmation required (Supabase reports
+ * mailer_autoconfirm: false), an unconfirmed account cannot sign in - not through any gate
+ * in this app, but because Supabase issues it no session in the first place. The confirmation
+ * message existed only as an inline notice on the sign-up form, so a customer who closed
+ * that tab, or whose email went to spam, had an account that was permanently unusable and no
+ * route in the product that acknowledged it. This is the way out.
+ *
+ * Limited to 3 per ten minutes, per client, and deliberately tighter than sign-in. Every
+ * call sends real mail through a mailer that allows only 2 messages an hour project-wide in
+ * the current configuration, so an unthrottled resend button is a way for one person to lock
+ * the confirmation flow for everybody else.
+ */
+const RESEND_LIMIT = 3;
+
+export async function resendConfirmationAction(formData: FormData): Promise<void> {
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+
+  if (!email) {
+    redirect("/auth/confirm-email?error=missing");
+  }
+
+  const headerList = await headers();
+  const limit = rateLimit({
+    key: clientKeyFrom(headerList, "auth:resend-confirmation"),
+    limit: RESEND_LIMIT,
+    windowMs: SIGNIN_WINDOW_MS,
+  });
+
+  if (!limit.allowed) {
+    redirect("/auth/confirm-email?error=throttled");
+  }
+
+  const supabase = await getSupabaseServerClient();
+
+  // The outcome is deliberately NOT read, for the same reason the reset action ignores its
+  // own: Supabase answers differently for an address that is awaiting confirmation and one
+  // that is not, and surfacing that difference would let this form be used to test which
+  // addresses have NUVORA accounts. The page says "if that address is waiting to be
+  // confirmed" either way, which is true in both cases.
+  await supabase.auth.resend({
+    type: "signup",
+    email,
+    options: {
+      emailRedirectTo: `${publicEnv.siteUrl}/auth/callback?next=%2Fdashboard`,
+    },
+  });
+
+  redirect("/auth/confirm-email?notice=sent");
 }
