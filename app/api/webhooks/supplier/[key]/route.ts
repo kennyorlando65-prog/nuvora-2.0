@@ -6,6 +6,7 @@ import { verifySupplierSignature, type SignatureScheme } from "@/lib/fulfilment/
 import { parseProviderMapping, readPath } from "@/lib/providers/mapping";
 import { decryptCredential } from "@/lib/providers/resolve";
 import { getServiceRoleClient } from "@/lib/supabase/server";
+import { redact } from "@/lib/observability/report-error";
 
 /**
  * Supplier callback receiver:  /api/webhooks/supplier/{providerKey}
@@ -78,7 +79,7 @@ export async function POST(
     .maybeSingle();
 
   if (providerError) {
-    console.error(`[supplier-webhook:${key}] could not read provider`, providerError.message);
+    console.error(`[supplier-webhook:${key}] could not read provider`, redact(providerError.message));
     // 503, not 404: a database problem is ours to fix and worth a supplier retry.
     return opaque(503);
   }
@@ -104,7 +105,7 @@ export async function POST(
       console.error(
         `[supplier-webhook:${key}] the stored webhook secret could not be decrypted; ` +
           "re-enter it on the provider page. Callback not processed.",
-        error instanceof Error ? error.message : error,
+        redact(error instanceof Error ? error.message : String(error)),
       );
       return opaque(503);
     }
@@ -153,7 +154,7 @@ export async function POST(
       return opaque(202);
     }
 
-    console.error(`[supplier-webhook:${key}] could not record event`, insertError.message);
+    console.error(`[supplier-webhook:${key}] could not record event`, redact(insertError.message));
     // 500 so a genuine storage failure is retried - losing a delivery callback silently is worse
     // than a duplicate, and duplicates are already handled above.
     return opaque(500);
@@ -185,7 +186,11 @@ export async function POST(
     console.log(`[supplier-webhook:${key}] ${processed}`);
     return opaque(200);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    // Redacted before it is stored or logged. An upstream error string is one of the easiest
+    // places for a credential to leak - a driver putting a connection string with a password
+    // into an exception is ordinary - and this value is both written to a column an operator
+    // reads and printed to the log.
+    const message = redact(error instanceof Error ? error.message : String(error));
 
     if (eventRowId !== undefined) {
       // processing_error, never processed_at: an event is processed or it errored, never both. The
@@ -196,7 +201,7 @@ export async function POST(
         .eq("id", eventRowId);
     }
 
-    console.error(`[supplier-webhook:${key}] processing failed`, error);
+    console.error(`[supplier-webhook:${key}] processing failed`, message);
     // Still 200: the event is recorded with its error, and a supplier retry would fail the same
     // way. The row is what surfaces it to an operator.
     return opaque(200);
