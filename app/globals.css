@@ -267,7 +267,164 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
   }
+
+  /* -- wordmark scale ------------------------------------------------------
+     There is no logo file and none is invented: NUVORA is the plain word, and
+     its presence is carried entirely by type - weight, size, tracking and the
+     space held around it. Four sizes so the mark can be loud in the header
+     and quiet in a footer without becoming a different mark.
+
+     The tracking is deliberate and unusual. At 0.2em the word reads as a
+     designed mark rather than as a word that happens to be capitalised, and
+     the wide spacing is what gives it weight without a heavier weight. */
+  .nuvora-wordmark-sm {
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--color-ink);
+  }
+
+  .nuvora-wordmark-md {
+    font-family: var(--font-sans);
+    font-size: 1.125rem;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--color-ink);
+  }
+
+  .nuvora-wordmark-lg {
+    font-family: var(--font-sans);
+    font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2rem);
+    font-weight: 700;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--color-ink);
+    line-height: 1;
+  }
+
+  /* The rule that sits under the wordmark. A single hairline in the accent,
+     not a box or a background: it gives the mark a base to stand on and
+     repeats the motif's language of thin signal lines. */
+  .nuvora-wordmark-rule {
+    display: block;
+    height: 2px;
+    width: 2.75rem;
+    background: var(--color-accent);
+    border-radius: 999px;
+  }
+
+  /* -- surface classes -----------------------------------------------------
+     THREE SURFACES, DELIBERATELY UNLIKE EACH OTHER.
+
+     The brief was that marketing pages, the customer app and the admin or
+     system pages should read as related but distinct, not as one template
+     with different text. They share the palette and the type scale, which is
+     what makes them one product; they differ in structure and in light, which
+     is what tells a person at a glance which surface they are on.
+
+       marketing - open, on the page background, generous space, no frame.
+                   Content is presented rather than contained.
+       app       - a floating panel inset from the edge, on a recessed bed.
+                   This is the app-window reading from the reference layout.
+       admin     - the same float, but on a darker, cooler bed with a denser
+                   top bar and a visible operator band. Deliberately plainer
+                   and tighter than the app: it is a console, not a shop.
+       system    - centred, narrow, no navigation at all, and framed with a
+                   status band. Errors, 404s and status pages. */
+  .nuvora-surface-marketing {
+    background: var(--color-bg);
+  }
+
+  .nuvora-surface-app {
+    background: var(--color-bg);
+  }
+
+  .nuvora-surface-admin {
+    /* Recessed one step further than the app bed, so the console frame reads
+       as set behind the content rather than level with it. */
+    background: var(--color-bg);
+    background-image: linear-gradient(var(--color-panel-2), var(--color-bg));
+  }
+
+  .nuvora-surface-system {
+    background: var(--color-bg);
+  }
+
+  /* The operator band across the top of the admin console. Present on every
+     admin screen, so there is never a moment of doubt about which surface a
+     change is being made on. */
+  .nuvora-operator-band {
+    background: var(--color-accent-soft);
+    border-bottom: 1px solid var(--color-accent);
+  }
+
+  /* -- the NUVORA motif ----------------------------------------------------
+     The motif is drawn in inline SVG (components/brand/signal-motif.tsx) and
+     coloured from here, so it can never drift from the palette.
+
+     It is built from what the product actually is: signal paths between
+     nodes. A node is a supplier, a network, or an order; the paths are the
+     delivery. It is decorative only - aria-hidden in the markup - so it never
+     enters the accessibility tree and never competes with content. */
+  .nuvora-motif {
+    color: var(--color-line);
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .nuvora-motif-accent {
+    color: var(--color-accent);
+  }
+
+  /* -- section furniture ---------------------------------------------------
+     Used to break the repetitive card rhythm: some sections sit on a raised
+     band, some on the recessed one, and some are separated by a hairline
+     rule with the motif running along it. Variation in the container is what
+     stops a long page reading as one uniform grid. */
+  .nuvora-band {
+    background: var(--color-panel-2);
+    border-top: 1px solid var(--color-line);
+    border-bottom: 1px solid var(--color-line);
+  }
+
+  .nuvora-band-raised {
+    background: var(--color-panel);
+    border-top: 1px solid var(--color-line);
+    border-bottom: 1px solid var(--color-line);
+  }
+
+  /* A card that carries emphasis: an accent edge on the left rather than a
+     heavier border all round, so a featured card gains weight without the
+     whole grid gaining weight with it. */
+  .nuvora-card-feature {
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-left: 3px solid var(--color-accent);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-raised);
+  }
+
+  /* A quieter card: flat, no shadow, on the recessed surface. Used for the
+     supporting items in a group so the group has a hierarchy instead of
+     four equally loud boxes. */
+  .nuvora-card-quiet {
+    background: transparent;
+    border: 1px solid var(--color-line-soft);
+    border-radius: var(--radius-card);
+  }
+
+  /* A numbered rule for benefit lists. The number sits in the accent and the
+     entry is separated by a hairline, which reads as a list of reasons
+     rather than as a row of cards. */
+  .nuvora-reason {
+    border-top: 1px solid var(--color-line);
+    padding-top: 1.25rem;
+  }
 }
+
 
 @media (prefers-reduced-motion: reduce) {
   html {
