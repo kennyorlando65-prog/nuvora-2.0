@@ -208,11 +208,21 @@ export async function signInWithGoogleAction(formData: FormData): Promise<void> 
   redirect(data.url);
 }
 
+/**
+ * Ask for a password-reset link.
+ *
+ * This action existed but was imported by nothing, and the sign-in page told the customer
+ * to "use the recovery flow from your account page" - a page that does not exist in this
+ * app. So a customer who forgot their password had no route back into their own account.
+ * The sign-in page now links here directly.
+ */
 export async function requestPasswordResetAction(formData: FormData): Promise<void> {
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
 
+  const backTo = (code: string) => `/auth/forgot-password?error=${code}`;
+
   if (!email) {
-    redirect("/auth/forgot-password?error=missing");
+    redirect(backTo("missing"));
   }
 
   const headerList = await headers();
@@ -223,7 +233,7 @@ export async function requestPasswordResetAction(formData: FormData): Promise<vo
   });
 
   if (!limit.allowed) {
-    redirect("/auth/forgot-password?error=throttled");
+    redirect(backTo("throttled"));
   }
 
   const supabase = await getSupabaseServerClient();
@@ -246,8 +256,9 @@ export async function requestPasswordResetAction(formData: FormData): Promise<vo
  *
  * THIS ACTION WAS THE MISSING HALF OF A BROKEN LOOP. `requestPasswordResetAction` sent a
  * link pointing at /auth/update-password, and no such page and no such action existed - the
- * link resolved to a 404. A customer who forgot their password could request a reset, click
- * the emailed link, receive a valid session, and then have nowhere to type a new password.
+ * link resolved to a 404 on the live site. A customer who forgot their password could
+ * request a reset, click the emailed link, receive a valid session, and then have nowhere
+ * to type a new password.
  *
  * The session IS the authorisation here. The emailed code was exchanged for one server-side
  * in /auth/callback before this page rendered, so "there is a user" means "whoever holds
