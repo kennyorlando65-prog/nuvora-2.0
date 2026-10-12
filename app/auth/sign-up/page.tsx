@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { PasswordField } from "@/components/auth/password-field";
 import { signUpAction } from "@/lib/auth/actions";
 import { isSupabaseConfigured } from "@/lib/env.public";
 
@@ -77,7 +78,11 @@ export default async function SignUpPage({
           className="rounded-[var(--radius-card)] border border-ok/40 bg-panel px-4 py-3 text-sm text-ink"
         >
           Your account has been created. Check your email for a confirmation link, then sign
-          in.
+          in. Nothing arrives in a few minutes?{" "}
+          <Link href="/auth/confirm-email" className="underline hover:text-accent">
+            Send the link again
+          </Link>
+          .
         </p>
       )}
 
@@ -93,7 +98,8 @@ export default async function SignUpPage({
             autoComplete="name"
             required
             maxLength={120}
-            className="nuvora-input"
+            aria-invalid={errorCode === "missing" || undefined}
+            className={`nuvora-input ${errorCode === "missing" ? "nuvora-input-invalid" : ""}`}
             placeholder="Ada Obi"
           />
         </div>
@@ -108,26 +114,25 @@ export default async function SignUpPage({
             type="email"
             autoComplete="email"
             required
-            className="nuvora-input"
+            aria-invalid={errorCode === "already-registered" || undefined}
+            className={`nuvora-input ${
+              errorCode === "already-registered" ? "nuvora-input-invalid" : ""
+            }`}
             placeholder="you@example.com"
           />
+          <p className="text-[11px] text-dim">
+            Your codes and receipts are delivered here, so use an address you can reach.
+          </p>
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label htmlFor="password" className="nuvora-label">
-            Password
-          </label>
-          <input
-            id="password"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            className="nuvora-input"
-          />
-          <p className="text-[11px] text-dim">At least 8 characters.</p>
-        </div>
+        <PasswordField
+          name="password"
+          label="Password"
+          autoComplete="new-password"
+          minLength={8}
+          invalid={errorCode === "weak-password" || errorCode === "missing"}
+          hint="At least 8 characters."
+        />
 
         <button
           type="submit"
