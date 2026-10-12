@@ -196,8 +196,8 @@ alter table public.suppliers
   -- Ciphertext only. The plaintext key exists in memory inside a server route for the
   -- duration of one call and is never written anywhere. See lib/crypto/secret-box.ts.
   add column credential_ciphertext text,
-  -- Last four characters, stored separately so the admin UI can show "****1234" without
-  -- ever decrypting anything.
+  -- Last four characters, stored separately so the admin UI can show a masked indicator
+  -- without ever decrypting anything.
   add column credential_hint text,
   add column credential_updated_at timestamptz,
   add column capabilities text[] not null default '{quote,fulfil,status,health}',
@@ -414,10 +414,15 @@ grant usage on sequence public.fulfilment_attempts_id_seq to service_role;
 --
 -- These are defaults, not fixtures: each is a real field the Settings page reads and
 -- writes. No product, price or supplier row is ever seeded by a migration.
+--
+-- NOTE ON business.support_email: this seeds a ROLE address, never a personal mailbox.
+-- The row is is_public = true, so it is served to anonymous visitors and it is visible
+-- in this repository. A personal address here would be scraped permanently and attached
+-- to a real name. If you are changing it, change it to another role address.
 -- -----------------------------------------------------------------------------
 insert into public.app_settings (key, value, value_type, label, description, is_public) values
   ('business.legal_name',      to_jsonb('NUVORA'::text),                  'string',  'Registered business name', 'Appears on invoices and in the footer.',                     true),
-  ('business.support_email',   to_jsonb('kennyorlando65@gmail.com'::text),'email',   'Support email',            'Where customer support replies come from and go to.',        true),
+  ('business.support_email',   to_jsonb('support@nuvora.app'::text),      'email',   'Support email',            'Where customer support replies come from and go to.',        true),
   ('business.support_hours',   to_jsonb('Monday to Saturday, 09:00-18:00 WAT'::text), 'string', 'Support hours', 'Shown on the contact page.',                                 true),
   ('business.country',         to_jsonb('NG'::text),                      'string',  'Country of operation',     'ISO-3166 alpha-2. Used for jurisdiction statements.',        true),
   ('business.website',         to_jsonb('https://example.invalid'::text), 'url',     'Public website',           'Placeholder. Set this before launch; it is quoted in legal copy.', true),
